@@ -7,6 +7,7 @@ import cv2
 from tornado.platform.asyncio import AsyncIOMainLoop
 import asyncio
 import os
+import json
 
 AsyncIOMainLoop().install()
 
@@ -32,11 +33,9 @@ class StreamHandler(tornado.web.RequestHandler):
         self.camera = camera
 
     async def get(self):
-        """
-        functionality: generates GET response with mjpeg stream
-        input: None
-        :return: yields mjpeg stream with http header
-        """
+        '''
+        Build MJPEG stream using the multipart HTTP header protocol
+        '''
         # Set http header fields
         self.set_header('Cache-Control',
                         'no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0')
@@ -58,13 +57,22 @@ class StreamHandler(tornado.web.RequestHandler):
             self.write(img)
             await tornado.gen.Task(self.flush)
 
+class StatsHandler(tornado.web.RequestHandler):
+    '''Provides stats on speed of processing'''
+    def initialize(self, controller):
+        self.controller = controller
 
-def start_server(camera, port=8888):
+    async def get(self):
+        self.write(json.dumps(self.controller.__dict__, default=lambda x: ''))
+
+
+def start_server(camera, controller, port=8888):
     app = tornado.web.Application([
         (r"/",HtmlPageHandler),
-        (r"/stream.mjpg", StreamHandler, {'camera': camera})
+        (r"/stream.mjpg", StreamHandler, {'camera': camera}),
+        (r"/stats", StatsHandler, {'controller': controller})
     ])
     print('Starting server on port {}'.format(port))
-    app.listen(8888)
+    app.listen(port)
 
 
