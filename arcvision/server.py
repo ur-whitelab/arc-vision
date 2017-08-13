@@ -7,8 +7,7 @@ import cv2
 from tornado.platform.asyncio import AsyncIOMainLoop
 import asyncio
 import os
-import time
-import hashlib
+
 
 AsyncIOMainLoop().install()
 

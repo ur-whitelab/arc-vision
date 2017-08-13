@@ -39,7 +39,7 @@ setup(
     author_email='white.d.andrew@gmail.com',
     entry_points=
        {
-           'console_scripts': ['arcvision=arcvision.main:main'],
+           'console_scripts': ['arcvision=arcvision.controller:main'],
         }
 
 )

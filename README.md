@@ -11,23 +11,19 @@ Vision process
 
 Installation / Usage
 --------------------
+Requires opencv. Also requires (currently) development version of zmq. To install this, run
 
-To install use pip:
+    pip install git+git://github.com/zeromq/pyzmq.git
 
-    $ pip install arc-vision
+To install package in edit mode use pip:
+
+    $ pip install -e .
 
 
-Or clone the repo:
+Execute
+----------------
 
-    $ git clone https://github.com/whitead/arc-vision.git
-    $ python setup.py install
-    
-Contributing
-------------
+Run from `ipython` or `python` to get detailed error messages
 
-TBD
-
-Example
--------
-
-TBD
+    import arcvision
+    arcvision.main()
