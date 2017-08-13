@@ -8,7 +8,6 @@ from tornado.platform.asyncio import AsyncIOMainLoop
 import asyncio
 import os
 
-
 AsyncIOMainLoop().install()
 
 RESOURCES = os.path.join(os.path.dirname(__file__), os.pardir, 'resources')
