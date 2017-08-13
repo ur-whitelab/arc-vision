@@ -1,7 +1,7 @@
 import zmq
 import zmq.asyncio
 import time
-import fire
+import argparse
 import asyncio
 from .camera import Camera
 from .server import start_server
@@ -22,9 +22,12 @@ class Controller:
 
     async def handle_start(self, video_filename, server_port):
         '''Begin processing webcam and updating state'''
-        print('Received start trigger. Opening camera')
+
         self.cam = Camera(video_filename)
         start_server(self.cam, self, server_port)
+        print('Started arcvision server')
+        import sys
+        sys.stdout.flush()
         d = Detector()
         d.attach(self.cam)
         while True:
@@ -45,12 +48,18 @@ class Controller:
             #exponential moving average of update frequency
             self.frequency = self.frequency * 0.8 +  0.2 / (time.time() - startTime)
 
-def main(video_filename=0, server_port=8888, zmq_port=5000, hostname='*'):
+def init(video_filename, server_port, zmq_port, hostname):
     c = Controller('tcp://{}:{}'.format(hostname, zmq_port))
     asyncio.ensure_future(c.handle_start(video_filename, server_port))
     loop = asyncio.get_event_loop()
     loop.run_forever()
 
 
-if __name__ == '__main__':
-    fire.Fire(main)
+def main():
+    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser.add_argument('--video-filename', help='location of video or empty for webcam', default='', dest='video_filename')
+    parser.add_argument('--server-port', help='port to run streaming server', default='8888', dest='server_port')
+    parser.add_argument('--zmq-port', help='port for pub/sub zeromq', default=5000, dest='zmq_port')
+    parser.add_argument('--hostname', help='hostname for pub/sub zeromq', default='*')
+    args = parser.parse_args()
+    init(args.video_filename, args.server_port, args.zmq_port, args.hostname)

@@ -50,7 +50,9 @@ class StreamHandler(tornado.web.RequestHandler):
                 return
             frame = self.camera.get_frame()
             ret, jpeg = cv2.imencode('.jpg', frame)
-            img = jpeg.tostring()
+            img = ''
+            if ret:
+                img = jpeg.tostring()
             self.write("--boundarydonotcross\n")
             self.write("Content-type: image/jpeg\r\n")
             self.write("Content-length: %s\r\n\r\n" % len(img))
@@ -63,6 +65,9 @@ class StatsHandler(tornado.web.RequestHandler):
         self.controller = controller
 
     async def get(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
         self.write(json.dumps(self.controller.__dict__, default=lambda x: ''))
 
 

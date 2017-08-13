@@ -9,11 +9,21 @@ import cv2
 class Camera:
     '''Class for managing processing video frames'''
     def __init__(self, video_file=-1, frame_buffer=10):
+
+        if video_file == '':
+            video_file = -1
+        #check if what is passed corresponds to an integer
+        try:
+            int_video_file = int(video_file)
+            video_file = int_video_file
+        except ValueError:
+            pass
         self.video_file = video_file
         self.sem = asyncio.Semaphore(frame_buffer)
         self.frame_fxns = []
         self.frame_strides = []
         self.frame = None
+
         self.cap = cv2.VideoCapture(self.video_file)
 
     def add_frame_fxn(self, fxn, stride=1):
