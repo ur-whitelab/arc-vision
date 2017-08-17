@@ -11,7 +11,7 @@ class Camera:
     def __init__(self, video_file=-1, frame_buffer=10):
 
         if video_file == '':
-            video_file = -1
+            video_file = 0
         #check if what is passed corresponds to an integer
         try:
             int_video_file = int(video_file)
