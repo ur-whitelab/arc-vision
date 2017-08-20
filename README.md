@@ -13,7 +13,7 @@ Installation / Usage
 --------------------
 Requires opencv. Also requires (currently) development version of zmq. To install this, run
 
-    pip install git+git://github.com/zeromq/pyzmq.git
+    pip install git+git://github.com/zeromq/pyzmq.git@v17.0.0b1
 
 To install package in edit mode use pip:
 
