@@ -6,6 +6,7 @@ import asyncio
 from .camera import Camera
 from .server import start_server
 from .tracking import Detector
+from .protobufs.reactors_pb2 import ReactorSystem
 
 
 zmq.asyncio.install()
@@ -34,6 +35,11 @@ class Controller:
         self.frequency = 1
         self.simulation_state = 'test'
 
+        #create state
+        self.vision_state = ReactorSystem()
+        self.vision_state.time = 0
+
+
     async def handle_start(self, video_filename, server_port):
         '''Begin processing webcam and updating state'''
 
@@ -50,7 +56,7 @@ class Controller:
     async def update_state(self):
         if await self.cam.update():
             #TODO: Insert update code here
-            self.vision_state = 'Placeholder'
+            self.vision_state.time += 1
             return self.vision_state
         return None
 
@@ -58,7 +64,7 @@ class Controller:
         startTime = time.time()
         state = await self.update_state()
         if state is not None:
-            await self.pub_sock.send_multipart(['vision-update'.encode(), state.encode()])
+            await self.pub_sock.send_multipart(['vision-update'.encode(), state.SerializeToString()])
             #exponential moving average of update frequency
             self.frequency = self.frequency * 0.8 +  0.2 / (time.time() - startTime)
 
