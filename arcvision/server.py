@@ -32,10 +32,11 @@ class StreamHandler(tornado.web.RequestHandler):
     def initialize(self, camera):
         self.camera = camera
 
-    async def get(self):
+    async def get(self, index):
         '''
         Build MJPEG stream using the multipart HTTP header protocol
         '''
+        index = int(index)
         # Set http header fields
         self.set_header('Cache-Control',
                         'no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0')
@@ -48,16 +49,19 @@ class StreamHandler(tornado.web.RequestHandler):
             if self.request.connection.stream.closed():
                 print('Request closed')
                 return
-            frame = self.camera.get_frame()
-            ret, jpeg = cv2.imencode('.jpg', frame)
+            frame = self.camera.get_decorated_frame(index)
+            if frame is not None:
+                ret, jpeg = cv2.imencode('.jpg', frame)
+            else:
+                ret = False
             img = ''
             if ret:
                 img = jpeg.tostring()
-            self.write("--boundarydonotcross\n")
-            self.write("Content-type: image/jpeg\r\n")
-            self.write("Content-length: %s\r\n\r\n" % len(img))
-            self.write(img)
-            await tornado.gen.Task(self.flush)
+                self.write("--boundarydonotcross\n")
+                self.write("Content-type: image/jpeg\r\n")
+                self.write("Content-length: %s\r\n\r\n" % len(img))
+                self.write(img)
+                await tornado.gen.Task(self.flush)
 
 class StatsHandler(tornado.web.RequestHandler):
     '''Provides stats on speed of processing'''
@@ -74,7 +78,7 @@ class StatsHandler(tornado.web.RequestHandler):
 def start_server(camera, controller, port=8888):
     app = tornado.web.Application([
         (r"/",HtmlPageHandler),
-        (r"/stream.mjpg", StreamHandler, {'camera': camera}),
+        (r"/([0-9]+)/stream.mjpg", StreamHandler, {'camera': camera}),
         (r"/stats", StatsHandler, {'controller': controller})
     ])
     print('Starting server on port {}'.format(port))

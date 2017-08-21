@@ -5,7 +5,7 @@ import argparse
 import asyncio
 from .camera import Camera
 from .server import start_server
-from .tracking import Detector
+from .processor import *
 from .protobufs.reactors_pb2 import ReactorSystem
 
 
@@ -32,8 +32,9 @@ class Controller:
         self.pub_sock = self.ctx.socket(zmq.PUB)
         self.pub_sock.connect(zmq_uri)
 
+        #statistics
         self.frequency = 1
-        self.simulation_state = 'test'
+        self.stream_number = 1
 
         #create state
         self.vision_state = ReactorSystem()
@@ -48,13 +49,15 @@ class Controller:
         print('Started arcvision server')
         import sys
         sys.stdout.flush()
-        d = Detector()
-        d.attach(self.cam)
+        for i in range(4):
+            p = ExampleProcessor()
+            self.cam.add_frame_processor(p)
         while True:
             await self.update_loop()
 
     async def update_state(self):
         if await self.cam.update():
+            self.stream_number = len(self.cam.frame_processors) + 1
             #TODO: Insert update code here
             self.vision_state.time += 1
             return self.vision_state
