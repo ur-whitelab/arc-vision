@@ -11,13 +11,14 @@ class Camera:
     def __init__(self, video_file=-1, frame_buffer=10):
 
         if video_file == '':
-            video_file = -1
+            video_file = 0
         #check if what is passed corresponds to an integer
         try:
             int_video_file = int(video_file)
             video_file = int_video_file
         except ValueError:
             pass
+        print('Camera using file {}'.format(video_file))
         self.video_file = video_file
         self.sem = asyncio.Semaphore(frame_buffer)
         self.frame_fxns = []
@@ -60,4 +61,7 @@ class Camera:
 
     def get_frame(self):
         return self.frame
+
+    def save_frame(self,frame,file_location):
+        cv2.imwrite(file_location,frame)
 

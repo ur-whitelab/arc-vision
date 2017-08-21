@@ -6,6 +6,7 @@ import asyncio
 from .camera import Camera
 from .server import start_server
 from .tracking import Detector
+from .calibration import Calibrate
 
 
 zmq.asyncio.install()
@@ -28,7 +29,17 @@ class Controller:
         print('Started arcvision server')
         import sys
         sys.stdout.flush()
-        d = Detector()
+
+        #run all of calibration here
+
+        c = Calibrate()
+        c.calibrate_image(self.cam.get_frame())
+
+        d = Detector(self.cam)
+
+        print('here')
+        d.get_snapshot(self.cam,file_location='temp/background.png')
+        print('done')
         d.attach(self.cam)
         while True:
             await self.update_loop()
