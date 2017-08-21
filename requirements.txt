@@ -4,6 +4,6 @@ sphinx_rtd_theme
 nose
 coverage
 pypi-publisher
-# opencv-python
-# pyzmq>=17.0.0
+pyzmq>=17.0.0b1
 tornado>=4.5
+
