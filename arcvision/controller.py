@@ -3,9 +3,10 @@ import zmq.asyncio
 import time
 import argparse
 import asyncio
+import glob
+import os
 from .camera import Camera
 from .server import start_server
-from .tracking import Detector
 from .calibration import Calibrate
 from .processor import *
 from .protobufs.reactors_pb2 import ReactorSystem
@@ -43,7 +44,7 @@ class Controller:
         self.vision_state.time = 0
 
 
-    async def handle_start(self, video_filename, server_port):
+    async def handle_start(self, video_filename, server_port, template_dir):
         '''Begin processing webcam and updating state'''
 
         self.cam = Camera(video_filename)
@@ -52,10 +53,30 @@ class Controller:
         import sys
         sys.stdout.flush()
 
-        for i in range(4):
-            p = ExampleProcessor()
-            self.cam.add_frame_processor(p)
+        preprocess = PreprocessProcessor()
+        ex = ExampleProcessor()
+        #load images
+        paths = []
+        labels = []
+        original = os.getcwd()
+        template_dir = os.path.abspath(template_dir)
+        try:
+            os.chdir(template_dir)
+            print('Found these template images in {}:'.format(template_dir))
+            for i in glob.glob('**/*.jpg', recursive=True):
+                labels.append(i)
+                paths.append(os.path.join(template_dir, i))
+                print('\t' + labels[-1])
 
+        finally:
+            os.chdir(original)
+
+        detector = DetectionProcessor(labels=labels, query_images=paths)
+
+        #add them
+        self.cam.add_frame_processor(preprocess)
+        self.cam.add_frame_processor(ex)
+        self.cam.add_frame_processor(detector)
         while True:
             await self.update_loop()
 
@@ -75,9 +96,9 @@ class Controller:
             #exponential moving average of update frequency
             self.frequency = self.frequency * 0.8 +  0.2 / (time.time() - startTime)
 
-def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, cc_hostname):
+def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, cc_hostname, template_dir):
     c = Controller(zmq_sub_port, zmq_pub_port, cc_hostname)
-    asyncio.ensure_future(c.handle_start(video_filename, server_port))
+    asyncio.ensure_future(c.handle_start(video_filename, server_port, template_dir))
     loop = asyncio.get_event_loop()
     loop.run_forever()
 
@@ -89,5 +110,6 @@ def main():
     parser.add_argument('--zmq-sub-port', help='port for receiving zmq sub update', default=5000, dest='zmq_sub_port')
     parser.add_argument('--cc-hostname', help='hostname for cc to receive zmq pub updates', default='localhost', dest='cc_hostname')
     parser.add_argument('--zmq-pub-port', help='port for publishing my zmq updates', default=2400, dest='zmq_pub_port')
+    parser.add_argument('--template-include', help='directory containing template images', dest='template_dir', required=True)
     args = parser.parse_args()
-    init(args.video_filename, args.server_port, args.zmq_sub_port, args.zmq_pub_port, args.cc_hostname)
+    init(args.video_filename, args.server_port, args.zmq_sub_port, args.zmq_pub_port, args.cc_hostname, args.template_dir)

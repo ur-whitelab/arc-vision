@@ -55,10 +55,12 @@ class Camera:
         for i,p in enumerate(self.frame_processors):
             if frame_ind % p.stride == 0:
                 #process frame
-                p.process_frame(self.frame)
+                self.frame = await p.process_frame(self.frame)
+                assert self.frame is not None, 'Processer {} returned None on Process Frame {}'.format(type(p).__name__, frame_ind)
             #if we are updating the decorated frame, then we must
             if(i < self.decorate_index and update_decorated):
-                p.decorate_frame(self.decorated_frame)
+                self.decorated_frame = await p.decorate_frame(self.decorated_frame)
+                assert self.decorated_frame is not None, 'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, frame_ind)
 
         self.sem.release()
 
@@ -68,13 +70,18 @@ class Camera:
         if self.cap.isOpened():
             await self.sem.acquire()
             ret, frame = self.cap.read()
-            if ret:
+            if ret and frame is not None:
                 self.frame = frame
                 task = asyncio.ensure_future(self._process_frame(frame_ind))
                 frame_ind += 1
                 await asyncio.sleep(0)
                 await asyncio.gather(task)
                 return True
+            # check this, for if we have a looping video
+            if frame_ind == cap.get(cv2.cv.CV_CAP_PROP_FRAME_COUNT):
+                print('Completed video, looping again')
+                frame_ind = 0 #Or whatever as long as it is the same as next line
+                cap.set(cv2.cv.CV_CAP_PROP_POS_FRAMES, 0)
         return False
 
     def get_frame(self):
