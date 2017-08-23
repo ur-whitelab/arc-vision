@@ -9,24 +9,29 @@ class Processor:
     def __init__(self, camera):
         camera.add_frame_processor(self)
 
-class ExampleProcessor(Processor):
+class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
-    def __init__(self, camera, width=500, height=500, stride=1):
+    def __init__(self, camera, rect, stride=1):
         super().__init__(camera)
-        self.corners = []
-        self.corners.append((random.randrange(0, width / 4), random.randrange(0, height / 4)))
-        self.corners.append((random.randrange(3 * width / 4, width), random.randrange(3 * height / 4, height)))
-        self.color = tuple([random.randrange(0,255) for i in range(3)])
+        self.rect = [ (rect[0], rect[1]), (rect[2], rect[3]) ]
         self.stride = stride
+        self.mask = None
+        self.dmask = None
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
-        #simulate working hard
+        if self.mask is None:
+            self.mask = np.zeros(frame.shape, dtype=np.uint8)
+            cv2.rectangle(self.mask, *self.rect, (255,)*3, thickness=cv2.FILLED)
+        frame = cv2.bitwise_and(frame, self.mask)
         return frame
 
     async def decorate_frame(self, frame):
         '''Draw visuals onto the given frame, without carrying-out update'''
-        cv2.rectangle(frame, *self.corners, self.color, 2)
+        if self.dmask is None:
+            self.dmask = np.zeros(frame.shape, dtype=np.uint8)
+            cv2.rectangle(self.dmask, *self.rect, (255,255,255), thickness=cv2.FILLED)
+        frame = cv2.bitwise_and(frame, self.dmask)
         return frame
 
 class PreprocessProcessor(Processor):
@@ -171,9 +176,40 @@ class TrackerProcessor(Processor):
         self.tracking.append(track_obj)
         return True
 
+class SegmentProcessor(Processor):
+    def __init__(self, camera):
+        super().__init__(camera)
+
+    async def process_frame(self, frame, frame_ind):
+        pass
+
+    async def decorate_frame(self, frame):
+        ret, thresh = cv2.threshold(gray,0,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+        # noise removal
+        kernel = np.ones((3,3),np.uint8)
+        opening = cv2.morphologyEx(thresh,cv2.MORPH_OPEN,kernel, iterations = 2)
+        # sure background area
+        sure_bg = cv2.dilate(opening,kernel,iterations=3)
+        # Finding sure foreground area
+        dist_transform = cv2.distanceTransform(opening,cv2.DIST_L2,5)
+        ret, sure_fg = cv2.threshold(dist_transform,0.7*dist_transform.max(),255,0)
+        # Finding unknown region
+        sure_fg = np.uint8(sure_fg)
+        unknown = cv2.subtract(sure_bg,sure_fg)
+        # Marker labelling
+        ret, markers = cv2.connectedComponents(sure_fg)
+        # Add one to all labels so that sure background is not 0, but 1
+        markers = markers+1
+        # Now, mark the region of unknown with zero
+        markers[unknown==255] = 0
+        markers = cv2.watershed(img,markers)
+        img[markers == -1] = [255,0,0]
+
+
 class DetectionProcessor(Processor):
+    '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
     def __init__(self, camera, query_images=[], labels=None, stride=10,
-                 threshold=1.0, template_size=256, min_match=10):
+                 threshold=1.0, template_size=256, min_match=5, weights=[1, 2]):
         super().__init__(camera)
         #load template images
         if labels is None:
@@ -184,8 +220,8 @@ class DetectionProcessor(Processor):
         for k,i in zip(labels, query_images):
             d = {'name': k, 'path': i}
             img = cv2.imread(i, 0)
-            h = int(template_size / img.shape[1] * img.shape[0])
-            img = cv2.resize(img, (template_size, h))
+            #h = int(template_size / img.shape[1] * img.shape[0])
+            #img = cv2.resize(img, (template_size, h))
             # get contours
             processed, poly = find_template_contour(img)
             # write it out so we can double check
@@ -207,13 +243,8 @@ class DetectionProcessor(Processor):
         self.features = {}
         self.threshold = threshold
         self.min_match = min_match
+        self.weights = weights
 
-        '''
-        # Initiate descriptors
-        self.desc = cv2.AKAZE_create()
-        #set-up our matcher
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        '''
         # Initiate descriptors
         self.desc = cv2.BRISK_create()
         #set-up our matcher
@@ -222,7 +253,7 @@ class DetectionProcessor(Processor):
         #get descriptors for templates
         for t in self.templates:
             t['desc'] = self.desc.detectAndCompute(t['img'], None)
-            if len(t['desc'][1]) == 0:
+            if t['desc'] is None or len(t['desc'][1]) == 0:
                 raise ValueError('Unable to compute descriptors on {}'.format(t['path']))
 
         #set-up our tracker
@@ -250,11 +281,11 @@ class DetectionProcessor(Processor):
                     cv2.circle(frame, tuple(p), 6, color, thickness=-1)
 
                 #draw polygon
-                cv2.polylines(frame,[points],True,color, 3,cv2.LINE_AA)
+                cv2.polylines(frame,[points],True, color, 3, cv2.LINE_AA)
                 #get bottom of polygon
                 y = sum([p[0][1] for p in points]) // 4
                 x = sum([p[0][0] for p in points]) // 4
-                cv2.putText(frame, n, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, color)
+                cv2.putText(frame, '{} ({:.2})'.format(n, f['score']), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, color)
 
         return frame
 
@@ -280,26 +311,7 @@ class DetectionProcessor(Processor):
                 template = t['img']
                 name = t['name']
                 descriptors = t['desc']
-                h,w, = template.shape
 
-                '''
-                matches = self.matcher.match(descriptors[1],des2)
-                matches = sorted(matches, key = lambda x:x.distance)
-
-                good = matches[:self.min_match]
-                src_pts = np.float32([ descriptors[0][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-                dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
-
-                M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,2.0)
-                matchesMask = mask.ravel().tolist()
-
-                pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-                dst = cv2.perspectiveTransform(pts,M)
-                features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
-                                        'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
-                                        'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
-
-                '''
                 matches = self.matcher.knnMatch(descriptors[1], des2, k=2)
                 # store all the good matches as per Lowe's ratio test.
                 good = []
@@ -311,6 +323,7 @@ class DetectionProcessor(Processor):
                 # check if we have enough good points
                 await asyncio.sleep(0)
                 if len(good) > self.min_match:
+
                     # look-up actual x,y keypoints
                     src_pts = np.float32([ descriptors[0][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
                     dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
@@ -319,20 +332,25 @@ class DetectionProcessor(Processor):
                     M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
                     matchesMask = mask.ravel().tolist()
 
-                    #pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-                    pts = np.float32([t['poly']]).reshape(-1,1,2)
-                    dst = cv2.perspectiveTransform(pts,M)
+                    src_poly = np.float32([t['poly']]).reshape(-1,1,2)
+                    dst_poly = cv2.perspectiveTransform(src_poly,M)
+                    dst_bbox = cv2.boundingRect(dst_poly)
 
                     await asyncio.sleep(0)
                     # check if the polygon is actually good
-                    area = cv2.contourArea(dst)
-                    perimter = cv2.arcLength(dst, True)
-                    if(cv2.isContourConvex(dst) and area / perimter > 1):
-                        features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
+                    area = cv2.contourArea(dst_poly)
+                    perimter = max(0.01, cv2.arcLength(dst_poly, True))
+                    if cv2.isContourConvex(dst_poly) and area / perimter > 0.0:
+                        score = len(good) * self.weights[0] + area / perimter * self.weights[1]
+
+                        # now we need to assess if this overlaps
+                        # TODO
+                        features[name].append({ 'color': t['color'], 'poly': np.int32(dst_poly),
                             'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
-                            'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
+                            'kpcolor': [cm(x.distance / good[-1].distance) for x in good],
+                            'score': score})
                         # register it with our tracker
-                        self.tracker.track(frame, np.int32(dst), t['name'])
+                        self.tracker.track(frame, np.int32(dst_poly), t['name'])
             except cv2.error:
                 #not enough points
                 await asyncio.sleep(0)

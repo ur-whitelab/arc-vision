@@ -4,8 +4,12 @@ import cv2
 import numpy as np
 
 def find_template_contour(img):
-    gray = cv2.bilateralFilter(img, 11, 17, 17)
-    edged = cv2.Canny(gray, 30, 200)
+    #gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # heuristic on my filter
+    # blur seems to work better
+    #gray = cv2.bilateralFilter(img, 32, 8, img.shape[0] / 16)
+    gray = cv2.blur(img, (5,5))
+    edged = cv2.Canny(gray, 100, 200)
     _, contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_KCOS)
     contours = sorted(contours, key = cv2.contourArea, reverse = True)[:min(10, len(contours))]
 
@@ -14,14 +18,17 @@ def find_template_contour(img):
     poly = cv2.approxPolyDP(c, 1, closed = True)
 
     # get polygon
-    # add color back in so we can plot
-    edged = cv2.cvtColor(edged, cv2.COLOR_GRAY2BGR)
     hull = cv2.convexHull(poly)
 
     # now crop original image to new contour
+    #remove background colors
     mask = np.zeros(img.shape, dtype=np.uint8)
     cv2.fillConvexPoly(mask, hull, (255,))
     img = cv2.bitwise_and(img, mask)
+
+    # now crop to bounding rectangle
+    box = cv2.boundingRect(hull)
+    img = img[box[1]:(box[1] + box[3]), box[0]:(box[0] + box[2])].copy()
 
     return img, hull
 

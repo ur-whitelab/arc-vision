@@ -44,7 +44,7 @@ class Controller:
         self.vision_state.time = 0
 
 
-    async def handle_start(self, video_filename, server_port, template_dir):
+    async def handle_start(self, video_filename, server_port, template_dir, crop):
         '''Begin processing webcam and updating state'''
 
         self.cam = Camera(video_filename)
@@ -54,7 +54,8 @@ class Controller:
         sys.stdout.flush()
 
         PreprocessProcessor(self.cam)
-        ExampleProcessor(self.cam)
+        if crop is not None:
+            CropProcessor(self.cam, crop)
         #load images
         paths = []
         labels = []
@@ -95,9 +96,9 @@ class Controller:
             #exponential moving average of update frequency
             self.frequency = self.frequency * 0.8 +  0.2 / (time.time() - startTime)
 
-def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, cc_hostname, template_dir):
+def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, cc_hostname, template_dir, crop):
     c = Controller(zmq_sub_port, zmq_pub_port, cc_hostname)
-    asyncio.ensure_future(c.handle_start(video_filename, server_port, template_dir))
+    asyncio.ensure_future(c.handle_start(video_filename, server_port, template_dir, crop))
     loop = asyncio.get_event_loop()
     loop.run_forever()
 
@@ -110,5 +111,15 @@ def main():
     parser.add_argument('--cc-hostname', help='hostname for cc to receive zmq pub updates', default='localhost', dest='cc_hostname')
     parser.add_argument('--zmq-pub-port', help='port for publishing my zmq updates', default=2400, dest='zmq_pub_port')
     parser.add_argument('--template-include', help='directory containing template images', dest='template_dir', required=True)
+    parser.add_argument('--crop', help='two x,y points defining crop', dest='crop', nargs=4)
+
     args = parser.parse_args()
-    init(args.video_filename, args.server_port, args.zmq_sub_port, args.zmq_pub_port, args.cc_hostname, args.template_dir)
+
+    crop = [int(c) for c in args.crop]
+    init(args.video_filename,
+         args.server_port,
+         args.zmq_sub_port,
+         args.zmq_pub_port,
+         args.cc_hostname,
+         args.template_dir,
+         crop)
