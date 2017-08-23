@@ -82,17 +82,19 @@ class TrackerProcessor(Processor):
 
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
-
-        for i,t in enumerate(self.tracking[:]):
+        delete = []
+        for t in self.tracking:
             status,bbox = t['tracker'].update(frame)
             #update polygon
-            t['delta'][0] = bbox[0] - t['init'][0]
-            t['delta'][1] = bbox[1] - t['init'][1]
+            if(status):
+                t['delta'][0] = bbox[0] - t['init'][0]
+                t['delta'][1] = bbox[1] - t['init'][1]
+                t['bbox'] = bbox
 
-            t['bbox'] = bbox
             # check obs counts
             if t['observed'] /  (self.ticks - t['start']) < self.min_obs_per_tick:
-                del self.tracking[i]
+                delete.append(t)
+        [self.tracking.remove(t) for t in delete]
 
         return frame
 
@@ -110,7 +112,9 @@ class TrackerProcessor(Processor):
             cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
 
             #put note about it
-            cv2.putText(frame, '{}: {}'.format(t['id'], t['observed']), (0, 60 * (i+ 1)),
+            cv2.putText(frame,
+                        '{}: {:.2} (limit: {:.2})'.format(t['id'], t['observed'] /  (self.ticks - t['start']), self.min_obs_per_tick ),
+                        (0, 60 * (i+ 1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
 
         return frame
@@ -140,6 +144,7 @@ class TrackerProcessor(Processor):
                     #update polygon and bounding box
                     t['poly'] = poly
                     t['init'] = bbox
+                    t['delta'] = np.int32([0,0])
                     t['tracker'].init(frame, bbox)
                     return False
             id = '{}-{}'.format(name, self.names[name])
@@ -271,67 +276,67 @@ class DetectionProcessor(Processor):
         for t in self.templates:
             features[t['name']] = []
         for t in self.templates:
-            template = t['img']
-            name = t['name']
-            descriptors = t['desc']
-            h,w, = template.shape
+            try:
+                template = t['img']
+                name = t['name']
+                descriptors = t['desc']
+                h,w, = template.shape
 
-            '''
-            matches = self.matcher.match(descriptors[1],des2)
-            matches = sorted(matches, key = lambda x:x.distance)
+                '''
+                matches = self.matcher.match(descriptors[1],des2)
+                matches = sorted(matches, key = lambda x:x.distance)
 
-            good = matches[:self.min_match]
-            src_pts = np.float32([ descriptors[0][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-            dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
-
-            M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,2.0)
-            matchesMask = mask.ravel().tolist()
-
-            pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-            dst = cv2.perspectiveTransform(pts,M)
-            features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
-                                    'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
-                                    'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
-
-            '''
-            matches = self.matcher.knnMatch(descriptors[1], des2, k=2)
-            # store all the good matches as per Lowe's ratio test.
-            good = []
-            if(len(matches[0]) > 1): #not sure how this happens
-                for m,n in matches:
-                    if m.distance < self.threshold * n.distance:
-                        good.append(m)
-
-            # check if we have enough good points
-            await asyncio.sleep(0)
-            if len(good) > self.min_match:
-                # look-up actual x,y keypoints
+                good = matches[:self.min_match]
                 src_pts = np.float32([ descriptors[0][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
                 dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
 
-                # use homography to find matrix transform between them
-                M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+                M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,2.0)
                 matchesMask = mask.ravel().tolist()
 
-                #pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-                pts = np.float32([t['poly']]).reshape(-1,1,2)
-                try:
-                    dst = cv2.perspectiveTransform(pts,M)
-                except cv2.error:
-                    #not enough points
-                    await asyncio.sleep(0)
-                    continue
+                pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+                dst = cv2.perspectiveTransform(pts,M)
+                features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
+                                        'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
+                                        'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
 
+                '''
+                matches = self.matcher.knnMatch(descriptors[1], des2, k=2)
+                # store all the good matches as per Lowe's ratio test.
+                good = []
+                if(len(matches[0]) > 1): #not sure how this happens
+                    for m,n in matches:
+                        if m.distance < self.threshold * n.distance:
+                            good.append(m)
+
+                # check if we have enough good points
                 await asyncio.sleep(0)
-                # check if the polygon is actually good
-                area = cv2.contourArea(dst)
-                perimter = cv2.arcLength(dst, True)
-                if(cv2.isContourConvex(dst) and area / perimter > 1):
-                    features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
-                        'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
-                        'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
-                    # register it with our tracker
-                    self.tracker.track(frame, np.int32(dst), t['name'])
+                if len(good) > self.min_match:
+                    # look-up actual x,y keypoints
+                    src_pts = np.float32([ descriptors[0][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
+                    dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+
+                    # use homography to find matrix transform between them
+                    M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+                    matchesMask = mask.ravel().tolist()
+
+                    #pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+                    pts = np.float32([t['poly']]).reshape(-1,1,2)
+                    dst = cv2.perspectiveTransform(pts,M)
+
+                    await asyncio.sleep(0)
+                    # check if the polygon is actually good
+                    area = cv2.contourArea(dst)
+                    perimter = cv2.arcLength(dst, True)
+                    if(cv2.isContourConvex(dst) and area / perimter > 1):
+                        features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
+                            'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
+                            'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
+                        # register it with our tracker
+                        self.tracker.track(frame, np.int32(dst), t['name'])
+            except cv2.error:
+                #not enough points
+                await asyncio.sleep(0)
+                continue
 
             #cede control
             await asyncio.sleep(0)
