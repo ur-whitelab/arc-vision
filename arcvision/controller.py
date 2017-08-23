@@ -64,9 +64,11 @@ class Controller:
             os.chdir(template_dir)
             print('Found these template images in {}:'.format(template_dir))
             for i in glob.glob('**/*.jpg', recursive=True):
-                labels.append(i)
-                paths.append(os.path.join(template_dir, i))
-                print('\t' + labels[-1])
+                # do not touch the debug images
+                if(i.find('contours') == -1):
+                    labels.append(i.split('.jpg')[0])
+                    paths.append(os.path.join(template_dir, i))
+                    print('\t' + labels[-1])
 
         finally:
             os.chdir(original)

@@ -3,7 +3,7 @@ import random
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-
+from .contours import *
 
 class Processor:
     def __init__(self, camera):
@@ -70,7 +70,7 @@ class BackgroundProcessor(Processor):
         return frame * self.fg_mask[:,:,np.newaxis]
 
 class TrackerProcessor(Processor):
-    def __init__(self, camera, detector_stride, delete_threshold=0.5, stride=1):
+    def __init__(self, camera, detector_stride, delete_threshold=0.2, stride=1):
         super().__init__(camera)
         self.tracking = []
         self.stride = stride
@@ -181,7 +181,12 @@ class DetectionProcessor(Processor):
             img = cv2.imread(i, 0)
             h = int(template_size / img.shape[1] * img.shape[0])
             img = cv2.resize(img, (template_size, h))
-            d['img'] = img
+            # get contours
+            processed, poly = find_template_contour(img)
+            # write it out so we can double check
+            cv2.imwrite(i.split('.jpg')[0] + '_contours.jpg', processed)
+            d['img'] = processed
+            d['poly'] = poly
             self.templates.append(d)
 
         #create color gradient
@@ -308,7 +313,8 @@ class DetectionProcessor(Processor):
                 M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
                 matchesMask = mask.ravel().tolist()
 
-                pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+                #pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+                pts = np.float32([t['poly']]).reshape(-1,1,2)
                 try:
                     dst = cv2.perspectiveTransform(pts,M)
                 except cv2.error:
