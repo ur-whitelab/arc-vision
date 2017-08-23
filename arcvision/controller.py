@@ -72,6 +72,7 @@ class Controller:
             os.chdir(original)
 
         DetectionProcessor(self.cam, labels=labels, query_images=paths)
+        BackgroundProcessor(self.cam)
 
         while True:
             await self.update_loop()

@@ -19,7 +19,7 @@ class ExampleProcessor(Processor):
         self.color = tuple([random.randrange(0,255) for i in range(3)])
         self.stride = stride
 
-    async def process_frame(self, frame):
+    async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
         #simulate working hard
         return frame
@@ -31,17 +31,13 @@ class ExampleProcessor(Processor):
 
 class PreprocessProcessor(Processor):
     '''Substracts and computes background'''
-    def __init__(self, camera, stride=1, background=None):
+    def __init__(self, camera, stride=1, bg_stride=16):
         super().__init__(camera)
         self.stride = stride
-        self.background = background
 
-    async def process_frame(self, frame):
+    async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
-        if self.background is not None:
-            cv2.addWeighted(frame, 1.0, self.background, -1.0)
         return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
 
     async def decorate_frame(self, frame):
         # go to BW but don't remove channel
@@ -49,6 +45,29 @@ class PreprocessProcessor(Processor):
         frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         return frame
 
+class BackgroundProcessor(Processor):
+    '''Substracts and computes background'''
+    def __init__(self, camera, stride=1, bg_stride=16):
+        super().__init__(camera)
+        self.stride = stride
+        self.mog = cv2.createBackgroundSubtractorMOG2(5000)
+        self.bg_stride = bg_stride
+        self.fg_mask = None
+        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
+
+    async def process_frame(self, frame, frame_ind):
+        '''Perform update on frame, carrying out algorithm'''
+        if self.fg_mask is None:
+            self.fg_mask = np.uint8(frame.copy())
+
+        if frame_ind % self.bg_stride == 0:
+            self.mog.apply(frame, self.fg_mask)
+            # self.fg_mask = cv2.morphologyEx(self.fg_mask, cv2.MORPH_OPEN, self.kernel)
+        return frame * self.fg_mask
+
+
+    async def decorate_frame(self, frame):
+        return frame * self.fg_mask[:,:,np.newaxis]
 
 class TrackerProcessor(Processor):
     def __init__(self, camera, detector_stride, delete_threshold=0.5, stride=1):
@@ -56,10 +75,12 @@ class TrackerProcessor(Processor):
         self.tracking = []
         self.stride = stride
         self.names = {}
+        # need to keep our own ticks because
+        # we don't know frame index when track() is called
         self.ticks = 0
         self.min_obs_per_tick = self.stride / detector_stride * delete_threshold
 
-    async def process_frame(self, frame):
+    async def process_frame(self, frame, frame_ind):
         self.ticks += 1
 
         for i,t in enumerate(self.tracking[:]):
@@ -199,7 +220,7 @@ class DetectionProcessor(Processor):
 
 
 
-    async def process_frame(self, frame):
+    async def process_frame(self, frame, frame_ind):
         if(self._ready):
             #copy the frame into it so we don't have it processed by later methods
             asyncio.ensure_future(self._identify_features(frame.copy()))
@@ -271,9 +292,10 @@ class DetectionProcessor(Processor):
             matches = self.matcher.knnMatch(descriptors[1], des2, k=2)
             # store all the good matches as per Lowe's ratio test.
             good = []
-            for m,n in matches:
-                if m.distance < self.threshold * n.distance:
-                    good.append(m)
+            if(len(matches[0]) > 1): #not sure how this happens
+                for m,n in matches:
+                    if m.distance < self.threshold * n.distance:
+                        good.append(m)
 
             # check if we have enough good points
             await asyncio.sleep(0)

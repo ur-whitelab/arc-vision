@@ -55,7 +55,7 @@ class Camera:
         for i,p in enumerate(self.frame_processors):
             if self.frame_ind % p.stride == 0:
                 #process frame
-                self.frame = await p.process_frame(self.frame)
+                self.frame = await p.process_frame(self.frame, self.frame_ind)
                 assert self.frame is not None, 'Processer {} returned None on Process Frame {}'.format(type(p).__name__, frame_ind)
             #if we are updating the decorated frame, then we must
             if(i < self.decorate_index and update_decorated):
