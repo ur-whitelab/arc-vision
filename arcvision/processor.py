@@ -2,6 +2,7 @@ import asyncio
 import random
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 class ExampleProcessor:
@@ -37,19 +38,44 @@ class PreprocessProcessor:
 
 
     async def decorate_frame(self, frame):
-        return await self.process_frame(frame)
+        return frame
 
-    def stop(self):
+
+class TrackerProcessor:
+    def __init__(self):
+        self.tracking = []
+
+    async def process_frame(self, frame):
         pass
+
+    async def decorate_frame(self, frame):
+        return await self.process_frame(frame)
 
 
 class DetectionProcessor:
-    def __init__(self, query_images=[], labels=None, stride=1, threshold=0.8, template_size=(32,32), min_match=3):
+    def __init__(self, query_images=[], labels=None, stride=10, threshold=1.0, template_size=256, min_match=10):
         #load template images
         if labels is None:
             labels = ['Key {}'.format(i) for i in range(len(query_images))]
+
         #read, convert to gray, and resize template images
-        self.templates = [{'name': k, 'img': cv2.resize(cv2.imread(i, 0), template_size), 'path': i} for k,i in zip(labels, query_images)]
+        self.templates = []
+        for k,i in zip(labels, query_images):
+            d = {'name': k, 'path': i}
+            img = cv2.imread(i, 0)
+            h = int(template_size / img.shape[1] * img.shape[0])
+            print(h)
+            img = cv2.resize(img, (template_size, h))
+            d['img'] = img
+            self.templates.append(d)
+
+        #create color gradient
+        N = len(labels)
+        cm = plt.cm.get_cmap('Dark2')
+        for i,t in enumerate(self.templates):
+            rgba = cm(i / N)
+            rgba = [int(x * 255) for x in rgba]
+            t['color'] = rgba[:-1]
 
         self.stride = 1
         self._ready = True
@@ -57,19 +83,25 @@ class DetectionProcessor:
         self.threshold = threshold
         self.min_match = min_match
 
-        # Initiate ORB detector
-        self.orb = cv2.ORB_create()
+        '''
+        # Initiate descriptors
+        self.desc = cv2.AKAZE_create()
+        #set-up our matcher
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        '''
+        # Initiate descriptors
+        self.desc = cv2.AKAZE_create()
+        #set-up our matcher
+        self.matcher = cv2.BFMatcher()
+
 
         #get descriptors for templates
         for t in self.templates:
-            t['orb'] = self.orb.detectAndCompute(t['img'], None)
+            t['desc'] = self.desc.detectAndCompute(t['img'], None)
+            if len(t['desc'][1]) == 0:
+                raise ValueError('Unable to compute descriptors on {}'.format(t['path']))
 
-        #set-up our flann detector
-        FLANN_INDEX_KDTREE = 0
-        index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
-        search_params = dict(checks = 50)
 
-        self.flann = cv2.FlannBasedMatcher(index_params, search_params)
 
 
     async def process_frame(self, frame):
@@ -79,13 +111,25 @@ class DetectionProcessor:
         return frame
 
     async def decorate_frame(self, frame):
+        # draw key points
+        kp,_ = self.desc.detectAndCompute(frame,None)
+        cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
         for n in self.features:
             for f in self.features[n]:
-                cv2.polylines(frame,f,True,255,3, cv2.LINE_AA)
+                points = f['poly']
+                color = f['color']
+                kp = f['kp']
+                kpcolor = f['kpcolor']
+                for p,c in zip(kp, kpcolor):
+                    cv2.circle(frame, tuple(p), 6, color, thickness=-1)
+
+                #draw polygon
+                cv2.polylines(frame,[points],True,color, 3,cv2.LINE_AA)
                 #get bottom of polygon
-                y = max([p[1] for p in f])
-                x = min([p[0] for p in f])
-                cv2.putText(frame, n, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
+                y = sum([p[0][1] for p in points]) // 4
+                x = sum([p[0][0] for p in points]) // 4
+                cv2.putText(frame, n, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, color)
+
         return frame
 
     async def _identify_features(self, frame):
@@ -94,35 +138,71 @@ class DetectionProcessor:
         self._ready = False
         #make new features object
         features = {}
+
+        #colormap
+        cm = plt.cm.get_cmap()
+
+        # find the keypoints and descriptors with desc
+        kp2, des2 = self.desc.detectAndCompute(frame,None)
+        if len(des2) == 0: #check if we have descriptors
+            return
+
         for t in self.templates:
             features[t['name']] = []
         for t in self.templates:
             template = t['img']
             name = t['name']
-            descriptors = t['orb']
-            w, h = template.shape[::-1]
+            descriptors = t['desc']
+            h,w, = template.shape
 
+            '''
+            matches = self.matcher.match(descriptors[1],des2)
+            matches = sorted(matches, key = lambda x:x.distance)
 
-            # find the keypoints and descriptors with orb
-            kp2, des2 = self.orb.detectAndCompute(frame,None)
+            good = matches[:self.min_match]
+            src_pts = np.float32([ descriptors[0][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
+            dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
 
-            matches = self.flann.knnMatch(descriptors[1],des2,k=2)
+            M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,2.0)
+            matchesMask = mask.ravel().tolist()
 
+            pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
+            dst = cv2.perspectiveTransform(pts,M)
+            features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
+                                    'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
+                                    'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
+
+            '''
+            matches = self.matcher.knnMatch(descriptors[1], des2, k=2)
             # store all the good matches as per Lowe's ratio test.
             good = []
             for m,n in matches:
                 if m.distance < self.threshold * n.distance:
                     good.append(m)
+
+            # check if we have enough good points
+            await asyncio.sleep(0)
             if len(good) > self.min_match:
+                # look-up actual x,y keypoints
                 src_pts = np.float32([ descriptors[0][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
                 dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
 
+                # use homography to find matrix transform between them
                 M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
                 matchesMask = mask.ravel().tolist()
 
-                h,w = img1.shape
                 pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
                 dst = cv2.perspectiveTransform(pts,M)
+
+                await asyncio.sleep(0)
+                # check if the polygon is actually good
+                area = cv2.contourArea(dst)
+                perimter = cv2.arcLength(dst, True)
+                if(cv2.isContourConvex(dst) and area / perimter > 1):
+                    features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
+                        'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
+                        'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
+
 
             #cede control
             await asyncio.sleep(0)

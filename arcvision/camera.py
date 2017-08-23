@@ -69,6 +69,11 @@ class Camera:
         frame_ind = 1
         if self.cap.isOpened():
             await self.sem.acquire()
+            # check this, for if we have a looping video
+            if frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
+                print('Completed video, looping again')
+                frame_ind = 0
+                self.cap = cv2.VideoCapture(self.video_file)
             ret, frame = self.cap.read()
             if ret and frame is not None:
                 self.frame = frame
@@ -77,11 +82,6 @@ class Camera:
                 await asyncio.sleep(0)
                 await asyncio.gather(task)
                 return True
-            # check this, for if we have a looping video
-            if frame_ind == cap.get(cv2.cv.CV_CAP_PROP_FRAME_COUNT):
-                print('Completed video, looping again')
-                frame_ind = 0 #Or whatever as long as it is the same as next line
-                cap.set(cv2.cv.CV_CAP_PROP_POS_FRAMES, 0)
         return False
 
     def get_frame(self):
@@ -92,8 +92,8 @@ class Camera:
 
     def get_decorated_frame(self, index=-1):
         '''Retrive the decorated frame and specify which one you want. Use negative to indicate last'''
-        if(index < 0):
-            index = len(self.frame_processors) - 1
+        if index < 0 or index > len(self.frame_processors):
+            index = len(self.frame_processors)
         self.decorate_index = index
         return self.decorated_frame
 
