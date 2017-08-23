@@ -26,6 +26,7 @@ class Camera:
         self.frame = None
         self.decorated_frame = None
         self.decorate_index = 0
+        self.frame_ind = 1
 
         self.cap = cv2.VideoCapture(self.video_file)
 
@@ -33,7 +34,6 @@ class Camera:
         '''Add a frame processor object'''
         assert hasattr(p, 'process_frame')
         assert hasattr(p, 'decorate_frame')
-        assert hasattr(p, 'stride')
         self.frame_processors.append(p)
 
     def remove_frame_fxn(self, p):
@@ -42,18 +42,18 @@ class Camera:
         del self.frame_processors[i]
 
 
-    async def _process_frame(self, frame_ind):
+    async def _process_frame(self):
         '''Process the frames. We only update the decorated frame when necessary'''
 
         update_decorated = False
         if self.decorate_index > 0:
             #check if the requested decorated frame will be updated
-            update_decorated = self.frame_processors[self.decorate_index - 1].stride % frame_ind == 0 #off by one so 0 can indicate no processing
+            update_decorated =  self.frame_ind % self.frame_processors[self.decorate_index - 1].stride == 0 #off by one so 0 can indicate no processing
         if update_decorated or self.decorate_index == 0:
-            self.decorated_frame = copy.copy(self.frame)
+            self.decorated_frame = self.frame.copy()
 
         for i,p in enumerate(self.frame_processors):
-            if frame_ind % p.stride == 0:
+            if self.frame_ind % p.stride == 0:
                 #process frame
                 self.frame = await p.process_frame(self.frame)
                 assert self.frame is not None, 'Processer {} returned None on Process Frame {}'.format(type(p).__name__, frame_ind)
@@ -66,19 +66,18 @@ class Camera:
 
     async def update(self):
         '''Process an update from the camera feed'''
-        frame_ind = 1
         if self.cap.isOpened():
             await self.sem.acquire()
             # check this, for if we have a looping video
-            if frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
+            if self.frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
                 print('Completed video, looping again')
-                frame_ind = 0
+                self.frame_ind = 1
                 self.cap = cv2.VideoCapture(self.video_file)
             ret, frame = self.cap.read()
             if ret and frame is not None:
                 self.frame = frame
-                task = asyncio.ensure_future(self._process_frame(frame_ind))
-                frame_ind += 1
+                task = asyncio.ensure_future(self._process_frame())
+                self.frame_ind += 1
                 await asyncio.sleep(0)
                 await asyncio.gather(task)
                 return True

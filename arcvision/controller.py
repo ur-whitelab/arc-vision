@@ -53,8 +53,8 @@ class Controller:
         import sys
         sys.stdout.flush()
 
-        preprocess = PreprocessProcessor()
-        ex = ExampleProcessor()
+        PreprocessProcessor(self.cam)
+        ExampleProcessor(self.cam)
         #load images
         paths = []
         labels = []
@@ -71,12 +71,8 @@ class Controller:
         finally:
             os.chdir(original)
 
-        detector = DetectionProcessor(labels=labels, query_images=paths)
+        DetectionProcessor(self.cam, labels=labels, query_images=paths)
 
-        #add them
-        self.cam.add_frame_processor(preprocess)
-        self.cam.add_frame_processor(ex)
-        self.cam.add_frame_processor(detector)
         while True:
             await self.update_loop()
 

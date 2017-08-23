@@ -5,9 +5,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-class ExampleProcessor:
+class Processor:
+    def __init__(self, camera):
+        camera.add_frame_processor(self)
+
+class ExampleProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
-    def __init__(self, width=500, height=500, stride=1):
+    def __init__(self, camera, width=500, height=500, stride=1):
+        super().__init__(camera)
         self.corners = []
         self.corners.append((random.randrange(0, width / 4), random.randrange(0, height / 4)))
         self.corners.append((random.randrange(3 * width / 4, width), random.randrange(3 * height / 4, height)))
@@ -24,9 +29,10 @@ class ExampleProcessor:
         cv2.rectangle(frame, *self.corners, self.color, 2)
         return frame
 
-class PreprocessProcessor:
+class PreprocessProcessor(Processor):
     '''Substracts and computes background'''
-    def __init__(self, stride=1, background=None):
+    def __init__(self, camera, stride=1, background=None):
+        super().__init__(camera)
         self.stride = stride
         self.background = background
 
@@ -38,22 +44,111 @@ class PreprocessProcessor:
 
 
     async def decorate_frame(self, frame):
+        # go to BW but don't remove channel
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         return frame
 
 
-class TrackerProcessor:
-    def __init__(self):
+class TrackerProcessor(Processor):
+    def __init__(self, camera, detector_stride, delete_threshold=0.5, stride=1):
+        super().__init__(camera)
         self.tracking = []
+        self.stride = stride
+        self.names = {}
+        self.ticks = 0
+        self.min_obs_per_tick = self.stride / detector_stride * delete_threshold
 
     async def process_frame(self, frame):
-        pass
+        self.ticks += 1
+
+        for i,t in enumerate(self.tracking[:]):
+            status,bbox = t['tracker'].update(frame)
+            #update polygon
+            t['delta'][0] = bbox[0] - t['init'][0]
+            t['delta'][1] = bbox[1] - t['init'][1]
+
+            t['bbox'] = bbox
+            # check obs counts
+            if t['observed'] /  (self.ticks - t['start']) < self.min_obs_per_tick:
+                del self.tracking[i]
+
+        return frame
+
 
     async def decorate_frame(self, frame):
-        return await self.process_frame(frame)
+        for i,t in enumerate(self.tracking):
+            if(t['observed'] < 3):
+                continue
+            bbox = t['bbox']
+            p1 = (int(bbox[0]), int(bbox[1]))
+            p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
+            cv2.rectangle(frame, p1, p2, (0,0,255), 1)
 
+            #now draw polygon
+            cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
 
-class DetectionProcessor:
-    def __init__(self, query_images=[], labels=None, stride=10, threshold=1.0, template_size=256, min_match=10):
+            #put note about it
+            cv2.putText(frame, '{}: {}'.format(t['id'], t['observed']), (0, 60 * (i+ 1)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
+
+        return frame
+
+    def _intersecting(a, b, threshold=0.25):
+        dx = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+        dy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+        if (dx >= 0) and (dy >= 0):
+            # check if most of one square's area is included
+            intArea = dx * dy
+            minArea = min(a[1] * a[3],  b[1] * b[3])
+            if(intArea / minArea > threshold):
+              return True
+        return False
+
+    def track(self, frame, poly, name):
+
+        bbox = cv2.boundingRect(poly)
+
+        if name in self.names:
+            #we need to make sure we don't have an existing example
+            for t in self.tracking:
+                if t['id'].split('-')[0] == name and TrackerProcessor._intersecting(bbox, t['bbox']):
+                    # found existing one
+                    # add to count
+                    t['observed'] += 1
+                    #update polygon and bounding box
+                    t['poly'] = poly
+                    t['init'] = bbox
+                    t['tracker'].init(frame, bbox)
+                    return False
+            id = '{}-{}'.format(name, self.names[name])
+            self.names[name] += 1
+        else:
+            self.names[name] = 0
+            id = '{}-{}'.format(name, self.names[name])
+
+        tracker = cv2.TrackerMedianFlow_create()
+        status = tracker.init(frame, bbox)
+
+        if not status:
+            print('Failed to initialize tracker')
+            return False
+
+        track_obj = {'id': id,
+                     'tracker': tracker,
+                     'poly': poly,
+                     'init': bbox,
+                     'bbox': bbox,
+                     'observed': 1,
+                     'start': self.ticks,
+                     'delta': np.int32([0,0])}
+        self.tracking.append(track_obj)
+        return True
+
+class DetectionProcessor(Processor):
+    def __init__(self, camera, query_images=[], labels=None, stride=10,
+                 threshold=1.0, template_size=256, min_match=10):
+        super().__init__(camera)
         #load template images
         if labels is None:
             labels = ['Key {}'.format(i) for i in range(len(query_images))]
@@ -64,7 +159,6 @@ class DetectionProcessor:
             d = {'name': k, 'path': i}
             img = cv2.imread(i, 0)
             h = int(template_size / img.shape[1] * img.shape[0])
-            print(h)
             img = cv2.resize(img, (template_size, h))
             d['img'] = img
             self.templates.append(d)
@@ -77,7 +171,7 @@ class DetectionProcessor:
             rgba = [int(x * 255) for x in rgba]
             t['color'] = rgba[:-1]
 
-        self.stride = 1
+        self.stride = stride
         self._ready = True
         self.features = {}
         self.threshold = threshold
@@ -90,10 +184,9 @@ class DetectionProcessor:
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         '''
         # Initiate descriptors
-        self.desc = cv2.AKAZE_create()
+        self.desc = cv2.BRISK_create()
         #set-up our matcher
         self.matcher = cv2.BFMatcher()
-
 
         #get descriptors for templates
         for t in self.templates:
@@ -101,6 +194,8 @@ class DetectionProcessor:
             if len(t['desc'][1]) == 0:
                 raise ValueError('Unable to compute descriptors on {}'.format(t['path']))
 
+        #set-up our tracker
+        self.tracker = TrackerProcessor(camera, stride)
 
 
 
@@ -144,7 +239,7 @@ class DetectionProcessor:
 
         # find the keypoints and descriptors with desc
         kp2, des2 = self.desc.detectAndCompute(frame,None)
-        if len(des2) == 0: #check if we have descriptors
+        if des2 is not None and len(des2) == 0: #check if we have descriptors
             return
 
         for t in self.templates:
@@ -192,7 +287,12 @@ class DetectionProcessor:
                 matchesMask = mask.ravel().tolist()
 
                 pts = np.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-                dst = cv2.perspectiveTransform(pts,M)
+                try:
+                    dst = cv2.perspectiveTransform(pts,M)
+                except cv2.error:
+                    #not enough points
+                    await asyncio.sleep(0)
+                    continue
 
                 await asyncio.sleep(0)
                 # check if the polygon is actually good
@@ -202,7 +302,8 @@ class DetectionProcessor:
                     features[name].append({ 'color': t['color'], 'poly': np.int32(dst),
                         'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
                         'kpcolor': [cm(x.distance / good[-1].distance) for x in good]})
-
+                    # register it with our tracker
+                    self.tracker.track(frame, np.int32(dst), t['name'])
 
             #cede control
             await asyncio.sleep(0)
