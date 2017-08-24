@@ -4,6 +4,7 @@
 import asyncio
 import cv2
 import copy
+import numpy as np
 
 #The async is so that the program can yield control to other asynchronous tasks
 
@@ -28,6 +29,7 @@ class Camera:
         self.decorate_index = 0
         self.decorate_name = 'raw'
         self.frame_ind = 1
+        self.stream_names = {'Base': 'raw'}
 
         self.cap = cv2.VideoCapture(self.video_file)
 
@@ -36,6 +38,7 @@ class Camera:
         assert hasattr(p, 'process_frame')
         assert hasattr(p, 'decorate_frame')
         self.frame_processors.append(p)
+        self.stream_names[p.__class__.__name__] = p.streams
 
     def remove_frame_fxn(self, p):
         '''Remove a frame processor object from being updated'''
@@ -70,7 +73,7 @@ class Camera:
 
                 # lots of steps, if we lose color channel add it back
                 if(len(self.decorated_frame.shape) == 2):
-                    self.decorated_frame = cv2.cvtColor(self.decorated_frame, cv2.COLOR_GRAY2BGR)
+                    self.decorated_frame = cv2.cvtColor(self.decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
                 assert self.decorated_frame is not None, \
                     'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)

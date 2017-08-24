@@ -7,9 +7,10 @@ from .contours import *
 
 class Processor:
     def __init__(self, camera, streams, stride):
-        camera.add_frame_processor(self)
+
         self.streams = streams
         self.stride = stride
+        camera.add_frame_processor(self)
 
 class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''

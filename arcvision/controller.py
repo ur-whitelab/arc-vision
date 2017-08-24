@@ -37,7 +37,7 @@ class Controller:
 
         #statistics
         self.frequency = 1
-        self.stream_number = 1
+        self.stream_names = []
 
         #create state
         self.vision_state = ReactorSystem()
@@ -76,6 +76,9 @@ class Controller:
 
         DetectionProcessor(self.cam, labels=labels, query_images=paths)
         BackgroundProcessor(self.cam)
+
+        # add our stream names now that everything has been added to the camera
+        self.stream_names = self.cam.stream_names
 
         while True:
             await self.update_loop()
