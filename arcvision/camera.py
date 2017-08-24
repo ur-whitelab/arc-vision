@@ -26,6 +26,7 @@ class Camera:
         self.frame = None
         self.decorated_frame = None
         self.decorate_index = 0
+        self.decorate_name = 'raw'
         self.frame_ind = 1
 
         self.cap = cv2.VideoCapture(self.video_file)
@@ -56,11 +57,11 @@ class Camera:
             if self.frame_ind % p.stride == 0:
                 #process frame
                 self.frame = await p.process_frame(self.frame, self.frame_ind)
-                assert self.frame is not None, 'Processer {} returned None on Process Frame {}'.format(type(p).__name__, frame_ind)
+                assert self.frame is not None, 'Processer {} returned None on Process Frame {}'.format(type(p).__name__, self.frame_ind)
             #if we are updating the decorated frame, then we must
             if(i < self.decorate_index and update_decorated):
-                self.decorated_frame = await p.decorate_frame(self.decorated_frame)
-                assert self.decorated_frame is not None, 'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, frame_ind)
+                self.decorated_frame = await p.decorate_frame(self.decorated_frame, self.decorate_name)
+                assert self.decorated_frame is not None, 'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
 
         self.sem.release()
 
@@ -69,10 +70,10 @@ class Camera:
         if self.cap.isOpened():
             await self.sem.acquire()
             # check this, for if we have a looping video
-            if self.frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
-                print('Completed video, looping again')
-                self.frame_ind = 1
-                self.cap = cv2.VideoCapture(self.video_file)
+            # if self.frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
+            #    print('Completed video, looping again')
+            #    self.frame_ind = 1
+            #    self.cap = cv2.VideoCapture(self.video_file)
             ret, frame = self.cap.read()
             if ret and frame is not None:
                 self.frame = frame
@@ -89,11 +90,17 @@ class Camera:
     def save_frame(self,frame,file_location):
         cv2.imwrite(file_location,frame)
 
-    def get_decorated_frame(self, index=-1):
-        '''Retrive the decorated frame and specify which one you want. Use negative to indicate last'''
-        if index < 0 or index > len(self.frame_processors):
-            index = len(self.frame_processors)
-        self.decorate_index = index
+    def get_decorated_frame(self, name):
+        if name == 'raw':
+            self.decorate_index = 0
+        for i, p in enumerate(self.frame_processors):
+            if name in p.streams:
+                break
+        self.decorate_index = i + 1
+        if not name in p.streams:
+            # bad name, so just give last one
+            name = p.streams[-1]
+        self.decorate_name = name
         return self.decorated_frame
 
 

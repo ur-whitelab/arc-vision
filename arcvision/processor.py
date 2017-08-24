@@ -6,15 +6,16 @@ import matplotlib.pyplot as plt
 from .contours import *
 
 class Processor:
-    def __init__(self, camera):
+    def __init__(self, camera, streams, stride):
         camera.add_frame_processor(self)
+        self.streams = streams
+        self.stride = stride
 
 class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
     def __init__(self, camera, rect, stride=1):
-        super().__init__(camera)
+        super().__init__(camera, ['crop'], stride)
         self.rect = [ (rect[0], rect[1]), (rect[2], rect[3]) ]
-        self.stride = stride
         self.mask = None
         self.dmask = None
 
@@ -27,7 +28,7 @@ class CropProcessor(Processor):
         frame = frame[ self.rect[0][1]:self.rect[1][1], self.rect[0][0]:self.rect[1][0]]
         return frame
 
-    async def decorate_frame(self, frame):
+    async def decorate_frame(self, frame, name):
         '''Draw visuals onto the given frame, without carrying-out update'''
         if self.dmask is None:
             self.dmask = np.zeros(frame.shape, dtype=np.uint8)
@@ -39,27 +40,26 @@ class CropProcessor(Processor):
 class PreprocessProcessor(Processor):
     '''Substracts and computes background'''
     def __init__(self, camera, stride=1, gamma=2.5):
-        super().__init__(camera)
-        self.stride = stride
+        super().__init__(camera, ['preprocess'], stride)
 
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        #return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return frame
 
-    async def decorate_frame(self, frame):
+    async def decorate_frame(self, frame, name):
         # go to BW but don't remove channel
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        #frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        #frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         return frame
 
 
 class BackgroundProcessor(Processor):
     '''Substracts and computes background'''
-    def __init__(self, camera, stride=1, bg_stride=16):
-        super().__init__(camera)
-        self.stride = stride
+    def __init__(self, camera, bg_stride=16):
+        super().__init__(camera, ['background-removal'], 1)
         self.mog = cv2.createBackgroundSubtractorMOG2(5000)
         self.bg_stride = bg_stride
         self.fg_mask = None
@@ -76,14 +76,16 @@ class BackgroundProcessor(Processor):
         return frame * self.fg_mask
 
 
-    async def decorate_frame(self, frame):
-        return frame * self.fg_mask[:,:,np.newaxis]
+    async def decorate_frame(self, frame, name):
+        if(len(frame) == 3):
+            return frame * self.fg_mask[:,:,np.newaxis]
+        else:
+            return frame * self.fg_mask[:,:,np.newaxis]
 
 class _TrackerProcessor(Processor):
     def __init__(self, camera, detector_stride, delete_threshold=0.2, stride=1):
-        super().__init__(camera)
+        super().__init__(camera, ['track'], stride)
         self.tracking = []
-        self.stride = stride
         self.names = {}
         # need to keep our own ticks because
         # we don't know frame index when track() is called
@@ -113,7 +115,7 @@ class _TrackerProcessor(Processor):
         return frame
 
 
-    async def decorate_frame(self, frame):
+    async def decorate_frame(self, frame, name):
         for i,t in enumerate(self.tracking):
             if(t['observed'] < 3):
                 continue
@@ -187,48 +189,94 @@ class _TrackerProcessor(Processor):
 
 class _SegmentProcessor(Processor):
     def __init__(self, camera, stride):
-        super().__init__(camera)
-        self.stride = stride
+        super().__init__(camera, ['background', 'distance', 'markers', 'watershed', 'boxes'], stride)
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        self.rect_iter = range(0)
 
     async def process_frame(self, frame, frame_ind):
+        bg = self.filter_background(frame)
+        dist_transform = self.filter_distance(bg)
+        markers = self.filter_ws_markers(dist_transform)
+        ws_markers = cv2.watershed(frame, markers)
+        self.rect_iter = self.watershed(frame, markers)
         return frame
 
-    async def decorate_frame(self, frame):
-        frame = cv2.pyrMeanShiftFiltering(frame, 21, 51)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        #gray = self.clahe.apply(gray)
-        ret, thresh = cv2.threshold(gray,0,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+    def segments(self):
+        yield from self.rect_iter
+
+    def segments(self, frame):
+        self.process_frame(frame)
+        return self.segments()
+
+    def filter_background(self, frame):
+        #img = cv2.pyrMeanShiftFiltering(frame, 21, 51)
+        img = cv2.blur(frame, (3,3))
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        ret, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         # noise removal
         kernel = np.ones((3,3),np.uint8)
         opening = cv2.morphologyEx(thresh,cv2.MORPH_OPEN,kernel, iterations = 2)
-        sure_bg = cv2.erode(opening, kernel, iterations = 10)
-        if(np.mean(sure_bg) > 255 / 2):
-            sure_bg[sure_bg == 255] = 5
-            sure_bg[sure_bg == 0] = 255
-            sure_bg[sure_bg == 5] = 0
+        bg = cv2.erode(opening, kernel, iterations = 10)
+        # check if perhaps our colors are inverted. background is assumed to be largest
+        if(np.mean(bg) > 255 / 2):
+            bg[bg == 255] = 5
+            bg[bg == 0] = 255
+            bg[bg == 5] = 0
+        return bg
 
-        # Finding sure foreground area
-        dist_transform = cv2.distanceTransform(sure_bg, cv2.DIST_L2,5)
-        ret, sure_fg = cv2.threshold(dist_transform,0.7*dist_transform.max(),255,0)
+    def filter_distance(self, frame):
+        dist_transform = cv2.distanceTransform(frame, cv2.DIST_L2,0)
+        dist_transform = cv2.normalize(dist_transform, dist_transform, 0, 255, cv2.NORM_MINMAX)
 
-        # Finding unknown region
-        sure_fg = np.uint8(sure_fg)
-        unknown = cv2.subtract(sure_bg,sure_fg)
+        #create distance tranform contours
+        dist_transform = np.uint8(dist_transform)
+        return dist_transform
 
-        ret, markers = cv2.connectedComponents(sure_fg)
-        # Add one to all labels so that sure background is not 0, but 1
-        markers = markers+1
-        # Now, mark the region of unknown with zero
-        markers[unknown==255] = 0
-        markers = cv2.watershed(frame,markers)
-        frame[markers == -1] = [255,255,0]
-        for i in np.unique(markers):
-            pixels = np.argwhere(markers == i)
-            if(len(pixels) > 5):
-                rect = cv2.boundingRect(pixels)
-                cv2.rectangle(frame, (rect[0], rect[0] + rect[2]), (rect[1], rect[1] + rect[3]), (255, 255, 255), 1)
-        return sure_bg
+    def filter_ws_markers(self, frame):
+        _, contours, _ = cv2.findContours(frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        #create markers
+        markers = np.zeros( frame.shape, dtype=np.uint8 )
+
+        for i in range(len(contours)):
+            #we draw onto our markers with fill to create the mask
+            cv2.drawContours(markers, contours, i, (i + 1,), -1)
+        #draw a tiny circle to indicate background hint
+        cv2.circle(markers, (5,5), 3, (255,))
+        return markers.astype(np.int32)
+
+    def watershed(self, frame, markers):
+        ws_markers = cv2.watershed(frame, markers)
+        for i in range(1, np.max(ws_markers)):
+            pixels = np.flip(np.argwhere(ws_markers == i), axis=1)
+            rect = cv2.boundingRect(pixels)
+            # exempt small or large rectangles (> 25 % of screen)
+            if(len(pixels) < 5 or rect[2] * rect[3] < 20 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
+                continue
+            yield rect
+
+
+    async def decorate_frame(self, frame, name):
+        bg = self.filter_background(frame)
+        if name == 'background':
+            return bg
+
+        dist_transform = self.filter_distance(bg)
+        if name == 'distance':
+            return dist_transform
+
+        markers = self.filter_ws_markers(dist_transform)
+        if name == 'markers':
+            return markers * 10000
+
+        if name == 'watershed':
+            ws_markers = cv2.watershed(frame, markers)
+            frame[ws_markers == -1] = (255, 255, 0)
+            return frame
+
+        for rect in self.watershed(frame, markers):
+            cv2.rectangle(frame, (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3]), (255, 255, 0), 1)
+        return frame
 
 
 class DetectionProcessor(Processor):
@@ -240,9 +288,9 @@ class DetectionProcessor(Processor):
         #set-up our tracker
         self.tracker = _TrackerProcessor(camera, stride)
         #then our segmenter
-        _SegmentProcessor(camera, stride)
+        self.segmenter = _SegmentProcessor(camera, stride)
         #then us
-        super().__init__(camera)
+        super().__init__(camera, ['keypoints', 'identify'], stride)
         #load template images
         if labels is None:
             labels = ['Key {}'.format(i) for i in range(len(query_images))]
@@ -270,7 +318,6 @@ class DetectionProcessor(Processor):
             rgba = [int(x * 255) for x in rgba]
             t['color'] = rgba[:-1]
 
-        self.stride = stride
         self._ready = True
         self.features = {}
         self.threshold = threshold
@@ -278,7 +325,7 @@ class DetectionProcessor(Processor):
         self.weights = weights
 
         # Initiate descriptors
-        self.desc = cv2.BRISK_create()
+        self.desc = cv2.KAZE_create()
         #set-up our matcher
         self.matcher = cv2.BFMatcher()
 
@@ -288,18 +335,19 @@ class DetectionProcessor(Processor):
             if t['desc'] is None or len(t['desc'][1]) == 0:
                 raise ValueError('Unable to compute descriptors on {}'.format(t['path']))
 
-
-
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
             #copy the frame into it so we don't have it processed by later methods
             asyncio.ensure_future(self._identify_features(frame.copy()))
         return frame
 
-    async def decorate_frame(self, frame):
+    async def decorate_frame(self, frame, name):
         # draw key points
-        kp,_ = self.desc.detectAndCompute(frame,None)
-        cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
+        for rect in self.segmenter.segments():
+            kp,_ = self._get_keypoints(frame, rect)
+            cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
+        if name == 'keypoints':
+            return frame
         for n in self.features:
             for f in self.features[n]:
                 points = f['poly']
@@ -317,6 +365,16 @@ class DetectionProcessor(Processor):
                 cv2.putText(frame, '{} ({:.2})'.format(n, f['score']), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, color)
 
         return frame
+
+    def _get_keypoints(self, frame, rect):
+        '''return the keypoints limited to a region'''
+
+        frame_view = frame[ rect[1]:(rect[1] + rect[3]), rect[0]:(rect[0] + rect[2]) ]
+        kp, des = self.desc.detectAndCompute(frame_view,None)
+        # need to transform the key points back
+        for i in range(len(kp)):
+            kp[i].pt = (rect[0] + kp[i].pt[0], rect[1] + kp[i].pt[1])
+        return kp, des
 
     async def _identify_features(self, frame):
         '''This method tries to run the calculation over multiple loops.

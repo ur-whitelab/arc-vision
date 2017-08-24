@@ -32,11 +32,10 @@ class StreamHandler(tornado.web.RequestHandler):
     def initialize(self, camera):
         self.camera = camera
 
-    async def get(self, index):
+    async def get(self, stream_name):
         '''
         Build MJPEG stream using the multipart HTTP header protocol
         '''
-        index = int(index)
         # Set http header fields
         self.set_header('Cache-Control',
                         'no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0')
@@ -49,7 +48,7 @@ class StreamHandler(tornado.web.RequestHandler):
             if self.request.connection.stream.closed():
                 print('Request closed')
                 return
-            frame = self.camera.get_decorated_frame(index)
+            frame = self.camera.get_decorated_frame(stream_name)
             if frame is not None:
                 ret, jpeg = cv2.imencode('.jpg', frame)
             else:
@@ -78,7 +77,7 @@ class StatsHandler(tornado.web.RequestHandler):
 def start_server(camera, controller, port=8888):
     app = tornado.web.Application([
         (r"/",HtmlPageHandler),
-        (r"/([0-9]+)/stream.mjpg", StreamHandler, {'camera': camera}),
+        (r"/([a-z\-]+)/stream.mjpg", StreamHandler, {'camera': camera}),
         (r"/stats", StatsHandler, {'controller': controller})
     ])
     print('Starting server on port {}'.format(port))
