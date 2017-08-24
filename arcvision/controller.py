@@ -54,6 +54,7 @@ class Controller:
         sys.stdout.flush()
 
         PreprocessProcessor(self.cam)
+
         if crop is not None:
             CropProcessor(self.cam, crop)
         #load images
@@ -64,7 +65,7 @@ class Controller:
         try:
             os.chdir(template_dir)
             print('Found these template images in {}:'.format(template_dir))
-            for i in glob.glob('**/*.jpg', recursive=True):
+            for i in glob.glob('*.jpg', recursive=True):
                 # do not touch the debug images
                 if(i.find('contours') == -1):
                     labels.append(i.split('.jpg')[0])
@@ -75,7 +76,7 @@ class Controller:
             os.chdir(original)
 
         DetectionProcessor(self.cam, labels=labels, query_images=paths)
-        BackgroundProcessor(self.cam)
+
 
         # add our stream names now that everything has been added to the camera
         self.stream_names = self.cam.stream_names

@@ -59,29 +59,45 @@ class PreprocessProcessor(Processor):
 
 class BackgroundProcessor(Processor):
     '''Substracts and computes background'''
-    def __init__(self, camera, bg_stride=16):
+    def __init__(self, camera, countdown=30):
         super().__init__(camera, ['background-removal'], 1)
-        self.mog = cv2.createBackgroundSubtractorMOG2(5000)
-        self.bg_stride = bg_stride
-        self.fg_mask = None
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
+        self.avg_background = None
+        self.countdown = countdown
+        self.countdown_start = countdown
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
-        if self.fg_mask is None:
-            self.fg_mask = np.uint8(frame.copy())
+        
+        if self.avg_background is None:
+            self.avg_background = np.empty(frame.shape, dtype=np.uint32)
+            self.avg_background[:] = 0    
 
-        if frame_ind % self.bg_stride == 0:
-            self.mog.apply(frame, self.fg_mask)
-            # self.fg_mask = cv2.morphologyEx(self.fg_mask, cv2.MORPH_OPEN, self.kernel)
-        return frame * self.fg_mask
+        if self.countdown > 0:
+            self.avg_background += frame
+            self.countdown -= 1
+            if self.countdown == 0:
+                self.avg_background //= self.countdown_start       
+                
+                self.avg_background = self.avg_background.astype(np.uint8)
+
+                kernel = np.ones((5,5),np.uint8)     
+                self.avg_background = cv2.morphologyEx(self.avg_background,cv2.MORPH_OPEN,kernel, iterations = 2)
+
+                
+
+        return frame
 
 
     async def decorate_frame(self, frame, name):
-        if(len(frame.shape) == 3):
-            return frame * self.fg_mask
-        else:
-            return frame * self.fg_mask[:,:,np.newaxis]
+    
+        if self.countdown > 0:
+            frame = self.avg_background.copy().astype(np.uint8)
+            cv2.putText(frame,
+                        'Processing Background - {}'.format(self.countdown),
+                        (0, frame.shape[1] // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
+            
+        return frame
 
 class _TrackerProcessor(Processor):
     def __init__(self, camera, detector_stride, delete_threshold=0.2, stride=1):
@@ -190,9 +206,11 @@ class _TrackerProcessor(Processor):
 
 class _SegmentProcessor(Processor):
     def __init__(self, camera, stride):
-        super().__init__(camera, ['background', 'distance', 'markers', 'watershed', 'boxes'], stride)
+        super().__init__(camera, ['background-subtract', 'background-thresh', 'background-dilate', 'background-open', 'background', 'distance', 'markers', 'watershed', 'boxes'], stride)
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         self.rect_iter = range(0)
+        self.background_processor = BackgroundProcessor(camera)
+        self.mode = 'preprocess'
 
     async def process_frame(self, frame, frame_ind):
         '''we only process on request'''
@@ -210,15 +228,37 @@ class _SegmentProcessor(Processor):
             self._process_frame(frame, 0)
         yield from self.rect_iter
 
-    def filter_background(self, frame):
+    def filter_background(self, frame, name = ''):
         #img = cv2.pyrMeanShiftFiltering(frame, 21, 51)
-        img = cv2.blur(frame, (3,3))
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        img = frame.copy()
+        if self.mode == 'production':
+            img -= self.background_processor.avg_background
+
+        if name == 'background-subtract':
+            return frame
+        if self.mode == 'production':
+            img = cv2.blur(img, (6,6))
+        else:
+            img = cv2.blur(img, (3,3))
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)        
         ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        #bg = th2 = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        #                                cv2.THRESH_BINARY_INV,11,2)
+        if name == 'background-thresh':
+            return bg
         # noise removal
         kernel = np.ones((3,3),np.uint8)
-        bg = cv2.erode(bg, kernel, iterations = 2)
+        if(self.mode == 'preprocess'):
+            bg = cv2.erode(bg, kernel, iterations = 2)
+        else:
+            bg = cv2.dilate(bg, kernel, iterations = 4)
+        if name == 'background-dilate':
+            return bg
         bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 2)
+        if name == 'background-open':
+            return bg
+
         # check if perhaps our colors are inverted. background is assumed to be largest
         if(np.mean(bg) > 255 / 2):
             bg[bg == 255] = 5
@@ -227,7 +267,10 @@ class _SegmentProcessor(Processor):
         return bg
 
     def filter_distance(self, frame):
-        dist_transform = cv2.distanceTransform(frame, cv2.DIST_L2,0)
+        if self.mode == 'preprocess':
+            dist_transform = cv2.distanceTransform(frame, cv2.DIST_L2,0)
+        else:
+            dist_transform = cv2.distanceTransform(frame, cv2.DIST_L2,5)
         dist_transform = cv2.normalize(dist_transform, dist_transform, 0, 255, cv2.NORM_MINMAX)
 
         #create distance tranform contours
@@ -246,6 +289,18 @@ class _SegmentProcessor(Processor):
         #draw a tiny circle to indicate background hint
         cv2.circle(markers, (5,5), 3, (255,))
         return markers.astype(np.int32)
+
+    def filter_contours(self, frame):
+        _, contours, _ = cv2.findContours(frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            rect = cv2.boundingRect(c)
+            #flip around our rectangle
+            rect = (rect[1], rect[0], rect[3], rect[2])
+            # exempt small or large rectangles (> 25 % of screen)
+            if(len(pixels) < 5 or rect[2] * rect[3] < 20 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
+                continue
+            yield rect
+
 
     def watershed(self, frame, markers):
         ws_markers = cv2.watershed(frame, markers)
@@ -284,8 +339,8 @@ class _SegmentProcessor(Processor):
         return frame, frame.shape[:2]
 
     async def decorate_frame(self, frame, name):
-        bg = self.filter_background(frame)
-        if name == 'background':
+        bg = self.filter_background(frame, name)
+        if name.find('background') != -1:
             return bg
 
         dist_transform = self.filter_distance(bg)
@@ -294,7 +349,7 @@ class _SegmentProcessor(Processor):
 
         markers = self.filter_ws_markers(dist_transform)
         if name == 'markers':
-            return markers * 10000
+            return markers * 30000
 
         if name == 'watershed':
             ws_markers = cv2.watershed(frame, markers)
@@ -367,6 +422,10 @@ class DetectionProcessor(Processor):
             t['color'] = rgba[:-1]
 
 
+        #switch out of prerocess mode
+        self.segmenter.mode = 'production'
+
+
 
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
@@ -378,7 +437,8 @@ class DetectionProcessor(Processor):
         # draw key points
         for rect in self.segmenter.segments(frame):
             kp,_ = self._get_keypoints(frame, rect)
-            cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
+            if(kp is not None):
+                cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
             # draw the rectangle that we use for kp
             rect = self._stretch_rectangle(rect, frame)
             cv2.rectangle(frame, (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3]), (255, 0, 0), 1)
