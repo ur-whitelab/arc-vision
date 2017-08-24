@@ -264,7 +264,7 @@ class _SegmentProcessor(Processor):
         dist_transform = self.filter_distance(bg)
         markers = self.filter_ws_markers(dist_transform)
         ws_markers = cv2.watershed(frame, markers)
-        frame[ws_markers == -1] = (255, 255, 0)
+
         #sort based on size
         pixels = [np.flip(np.argwhere(ws_markers == i), axis=1) for i in range(1, np.max(ws_markers))]
         def key(x):
@@ -272,14 +272,13 @@ class _SegmentProcessor(Processor):
             return r[2] * r[3]
         pixels.sort(key = key, reverse=True)
         for p in pixels:
-            # exempt small or large rectangles (> 25 % of screen)
+            # exempt small rectangles
             rect = cv2.boundingRect(p)
-            if(len(p) < 5 or rect[2] * rect[3] < 20 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
+            if(len(p) < 5 or rect[2] * rect[3] < 20 ):
                 continue
             # once we find one, use it
             hull = cv2.convexHull(p)
-            cv2.polylines(frame, [hull], True, (0,0,255), 3)
-            return frame, hull
+            return frame, hull, rect
 
         print('Could not identify polygon. See processed file.')
         return frame, frame.shape[:2]
@@ -314,29 +313,50 @@ class DetectionProcessor(Processor):
 
         #we have a specific order required
         #set-up our tracker
-        self.tracker = _TrackerProcessor(camera, stride)
+        # give estimate of our stride
+        #self.tracker = _TrackerProcessor(camera, stride * 2 * len(query_images))
         #then our segmenter
         self.segmenter = _SegmentProcessor(camera, stride)
         #then us
         super().__init__(camera, ['keypoints', 'identify'], stride)
+
+        
+        self._ready = True
+        self.features = {}
+        self.threshold = threshold
+        self.min_match = min_match
+        self.weights = weights
+        self.stretch_boxes=1.5
+
+
+        # Initiate descriptors
+        self.desc = cv2.BRISK_create(octaves=3, thresh=15)
+        #set-up our matcher
+        self.matcher = cv2.BFMatcher()
+
         #load template images
         if labels is None:
             labels = ['Key {}'.format(i) for i in range(len(query_images))]
-
         #read, convert to gray, and resize template images
         self.templates = []
         for k,i in zip(labels, query_images):
-            d = {'name': k, 'path': i}
+            t = {'name': k, 'path': i}
             img = cv2.imread(i)
             #h = int(template_size / img.shape[1] * img.shape[0])
             #img = cv2.resize(img, (template_size, h))
             # get contours
-            processed, poly = self.segmenter.polygon(img)
+            processed, poly, rect = self.segmenter.polygon(img)
+            t['desc'] = self._get_keypoints(img, rect)         
+            if t['desc'][1] is None or len(t['desc'][1]) == 0:
+                raise ValueError('Unable to compute descriptors on {}'.format(t['path']))
+            # put info on image
+            cv2.polylines(processed, [poly], True, (0,0,255), 3)
+            cv2.drawKeypoints(processed, t['desc'][0], processed, color=(32,32,32), flags=0)
             # write it out so we can double check
             cv2.imwrite(i.split('.jpg')[0] + '_contours.jpg', processed)
-            d['img'] = processed
-            d['poly'] = poly
-            self.templates.append(d)
+            t['img'] = processed
+            t['poly'] = poly
+            self.templates.append(t)
 
         #create color gradient
         N = len(labels)
@@ -346,22 +366,7 @@ class DetectionProcessor(Processor):
             rgba = [int(x * 255) for x in rgba]
             t['color'] = rgba[:-1]
 
-        self._ready = True
-        self.features = {}
-        self.threshold = threshold
-        self.min_match = min_match
-        self.weights = weights
 
-        # Initiate descriptors
-        self.desc = cv2.KAZE_create()
-        #set-up our matcher
-        self.matcher = cv2.BFMatcher()
-
-        #get descriptors for templates
-        for t in self.templates:
-            t['desc'] = self.desc.detectAndCompute(t['img'], None)
-            if t['desc'] is None or len(t['desc'][1]) == 0:
-                raise ValueError('Unable to compute descriptors on {}'.format(t['path']))
 
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
@@ -374,6 +379,10 @@ class DetectionProcessor(Processor):
         for rect in self.segmenter.segments(frame):
             kp,_ = self._get_keypoints(frame, rect)
             cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
+            # draw the rectangle that we use for kp
+            rect = self._stretch_rectangle(rect, frame)
+            cv2.rectangle(frame, (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3]), (255, 0, 0), 1)
+
         if name == 'keypoints':
             return frame
         for n in self.features:
@@ -394,12 +403,27 @@ class DetectionProcessor(Processor):
 
         return frame
 
+    def _stretch_rectangle(self, rect, frame):
+        # stretch out the rectangle
+        rect = list(rect)
+        rect[0] += int(rect[2] * (1 - self.stretch_boxes) // 2)
+        rect[1] += int(rect[3] * (1 - self.stretch_boxes) // 2)
+        rect[2] = int(rect[2] * self.stretch_boxes)
+        rect[3] = int(rect[3] * self.stretch_boxes)
+        
+        rect[0] = max(rect[0], 0)
+        rect[1] = max(rect[1], 0)
+        rect[2] = min(frame.shape[1], rect[2])
+        rect[3] = min(frame.shape[0], rect[3])
+        return rect
+
     def _get_keypoints(self, frame, rect):
         '''return the keypoints limited to a region'''
+        rect = self._stretch_rectangle(rect, frame)
 
         frame_view = frame[ rect[1]:(rect[1] + rect[3]), rect[0]:(rect[0] + rect[2]) ]
-        kp, des = self.desc.detectAndCompute(frame_view,None)
-        # need to transform the key points back
+        kp, des = self.desc.detectAndCompute(frame_view,None)        
+        #need to transform the key points back
         for i in range(len(kp)):
             kp[i].pt = (rect[0] + kp[i].pt[0], rect[1] + kp[i].pt[1])
         return kp, des
@@ -415,7 +439,10 @@ class DetectionProcessor(Processor):
                 features = await self._process_frame_view(features, frame, kp, des)
 
         #now swap with our features
-        self.features = features
+        for f in self.features:
+            if(len(self.features[f]) > 0):
+                self.features = features
+                break
         self._ready = True
 
     async def _process_frame_view(self, features, frame, kp, des):
@@ -438,7 +465,6 @@ class DetectionProcessor(Processor):
                     for m,n in matches:
                         if m.distance < self.threshold * n.distance:
                             good.append(m)
-
                 # check if we have enough good points
                 if len(good) > self.min_match:
 
@@ -465,7 +491,7 @@ class DetectionProcessor(Processor):
                             'kpcolor': [cm(x.distance / good[-1].distance) for x in good],
                             'score': score})
                         # register it with our tracker
-                        self.tracker.track(frame, np.int32(dst_poly), t['name'])
+                        # self.tracker.track(frame, np.int32(dst_poly), t['name'])
             except cv2.error:
                 #not enough points
                 await asyncio.sleep(0)

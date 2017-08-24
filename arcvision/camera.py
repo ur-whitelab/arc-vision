@@ -29,7 +29,7 @@ class Camera:
         self.decorate_index = 0
         self.decorate_name = 'raw'
         self.frame_ind = 1
-        self.stream_names = {'Base': 'raw'}
+        self.stream_names = {'Base': ['raw']}
 
         self.cap = cv2.VideoCapture(self.video_file)
 
