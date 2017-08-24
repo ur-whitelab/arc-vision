@@ -53,15 +53,29 @@ class Camera:
         if update_decorated or self.decorate_index == 0:
             self.decorated_frame = self.frame.copy()
 
+        start_dims = self.frame.shape
         for i,p in enumerate(self.frame_processors):
             if self.frame_ind % p.stride == 0:
                 #process frame
                 self.frame = await p.process_frame(self.frame, self.frame_ind)
-                assert self.frame is not None, 'Processer {} returned None on Process Frame {}'.format(type(p).__name__, self.frame_ind)
+
+                assert self.frame is not None, \
+                    'Processer {} returned None on Process Frame {}'.format(type(p).__name__, self.frame_ind)
+
+                assert self.frame.shape[-1] == start_dims[-1], \
+                    'Processor {} modified frame channel from {} to {}'.format(type(p), start_dims, self.frame.shape)
             #if we are updating the decorated frame, then we must
             if(i < self.decorate_index and update_decorated):
                 self.decorated_frame = await p.decorate_frame(self.decorated_frame, self.decorate_name)
-                assert self.decorated_frame is not None, 'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
+
+                # lots of steps, if we lose color channel add it back
+                if(len(self.decorated_frame.shape) == 2):
+                    self.decorated_frame = cv2.cvtColor(self.decorated_frame, cv2.COLOR_GRAY2BGR)
+
+                assert self.decorated_frame is not None, \
+                    'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
+
+
 
         self.sem.release()
 
@@ -93,6 +107,7 @@ class Camera:
     def get_decorated_frame(self, name):
         if name == 'raw':
             self.decorate_index = 0
+            return self.decorated_frame
         for i, p in enumerate(self.frame_processors):
             if name in p.streams:
                 break

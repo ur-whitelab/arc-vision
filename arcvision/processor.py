@@ -77,8 +77,8 @@ class BackgroundProcessor(Processor):
 
 
     async def decorate_frame(self, frame, name):
-        if(len(frame) == 3):
-            return frame * self.fg_mask[:,:,np.newaxis]
+        if(len(frame.shape) == 3):
+            return frame * self.fg_mask
         else:
             return frame * self.fg_mask[:,:,np.newaxis]
 
@@ -194,6 +194,10 @@ class _SegmentProcessor(Processor):
         self.rect_iter = range(0)
 
     async def process_frame(self, frame, frame_ind):
+        '''we only process on request'''
+        return frame
+
+    def _process_frame(self, frame, frame_ind):
         bg = self.filter_background(frame)
         dist_transform = self.filter_distance(bg)
         markers = self.filter_ws_markers(dist_transform)
@@ -201,22 +205,20 @@ class _SegmentProcessor(Processor):
         self.rect_iter = self.watershed(frame, markers)
         return frame
 
-    def segments(self):
+    def segments(self, frame = None):
+        if frame is not None:
+            self._process_frame(frame, 0)
         yield from self.rect_iter
-
-    def segments(self, frame):
-        self.process_frame(frame)
-        return self.segments()
 
     def filter_background(self, frame):
         #img = cv2.pyrMeanShiftFiltering(frame, 21, 51)
         img = cv2.blur(frame, (3,3))
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        ret, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         # noise removal
         kernel = np.ones((3,3),np.uint8)
-        opening = cv2.morphologyEx(thresh,cv2.MORPH_OPEN,kernel, iterations = 2)
-        bg = cv2.erode(opening, kernel, iterations = 10)
+        bg = cv2.erode(bg, kernel, iterations = 2)
+        bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 2)
         # check if perhaps our colors are inverted. background is assumed to be largest
         if(np.mean(bg) > 255 / 2):
             bg[bg == 255] = 5
@@ -248,8 +250,10 @@ class _SegmentProcessor(Processor):
     def watershed(self, frame, markers):
         ws_markers = cv2.watershed(frame, markers)
         for i in range(1, np.max(ws_markers)):
-            pixels = np.flip(np.argwhere(ws_markers == i), axis=1)
+            pixels = np.argwhere(ws_markers == i)
             rect = cv2.boundingRect(pixels)
+            #flip around our rectangle
+            rect = (rect[1], rect[0], rect[3], rect[2])
             # exempt small or large rectangles (> 25 % of screen)
             if(len(pixels) < 5 or rect[2] * rect[3] < 20 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
                 continue
@@ -282,7 +286,7 @@ class _SegmentProcessor(Processor):
 class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
     def __init__(self, camera, query_images=[], labels=None, stride=10,
-                 threshold=1.0, template_size=256, min_match=5, weights=[1, 2]):
+                 threshold=1.0, template_size=256, min_match=6, weights=[1, 2]):
 
         #we have a specific order required
         #set-up our tracker
@@ -343,7 +347,7 @@ class DetectionProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         # draw key points
-        for rect in self.segmenter.segments():
+        for rect in self.segmenter.segments(frame):
             kp,_ = self._get_keypoints(frame, rect)
             cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
         if name == 'keypoints':
@@ -377,19 +381,23 @@ class DetectionProcessor(Processor):
         return kp, des
 
     async def _identify_features(self, frame):
-        '''This method tries to run the calculation over multiple loops.
-            The _ready is to in lieu of a callback on completion'''
         self._ready = False
         #make new features object
         features = {}
 
-        #colormap
-        cm = plt.cm.get_cmap()
+        for rect in self.segmenter.segments(frame):
+            kp, des = self._get_keypoints(frame, rect)
+            if(des is not None and len(des) > 2):
+                features = await self._process_frame_view(features, frame, kp, des)
 
-        # find the keypoints and descriptors with desc
-        kp2, des2 = self.desc.detectAndCompute(frame,None)
-        if des2 is not None and len(des2) == 0: #check if we have descriptors
-            return
+        #now swap with our features
+        self.features = features
+        self._ready = True
+
+    async def _process_frame_view(self, features, frame, kp, des):
+        '''This method tries to run the calculation over multiple loops.
+            The _ready is to in lieu of a callback on completion'''
+        self._ready = False
 
         for t in self.templates:
             features[t['name']] = []
@@ -399,7 +407,7 @@ class DetectionProcessor(Processor):
                 name = t['name']
                 descriptors = t['desc']
 
-                matches = self.matcher.knnMatch(descriptors[1], des2, k=2)
+                matches = self.matcher.knnMatch(descriptors[1], des, k=2)
                 # store all the good matches as per Lowe's ratio test.
                 good = []
                 if(len(matches[0]) > 1): #not sure how this happens
@@ -408,12 +416,11 @@ class DetectionProcessor(Processor):
                             good.append(m)
 
                 # check if we have enough good points
-                await asyncio.sleep(0)
                 if len(good) > self.min_match:
 
                     # look-up actual x,y keypoints
                     src_pts = np.float32([ descriptors[0][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-                    dst_pts = np.float32([ kp2[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+                    dst_pts = np.float32([ kp[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
 
                     # use homography to find matrix transform between them
                     M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
@@ -423,17 +430,14 @@ class DetectionProcessor(Processor):
                     dst_poly = cv2.perspectiveTransform(src_poly,M)
                     dst_bbox = cv2.boundingRect(dst_poly)
 
-                    await asyncio.sleep(0)
                     # check if the polygon is actually good
                     area = cv2.contourArea(dst_poly)
                     perimter = max(0.01, cv2.arcLength(dst_poly, True))
                     if cv2.isContourConvex(dst_poly) and area / perimter > 0.0:
                         score = len(good) * self.weights[0] + area / perimter * self.weights[1]
-
-                        # now we need to assess if this overlaps
-                        # TODO
+                        cm = plt.cm.get_cmap()
                         features[name].append({ 'color': t['color'], 'poly': np.int32(dst_poly),
-                            'kp': np.int32([kp2[m.trainIdx].pt for m in good]).reshape(-1,2),
+                            'kp': np.int32([kp[m.trainIdx].pt for m in good]).reshape(-1,2),
                             'kpcolor': [cm(x.distance / good[-1].distance) for x in good],
                             'score': score})
                         # register it with our tracker
@@ -445,6 +449,4 @@ class DetectionProcessor(Processor):
 
             #cede control
             await asyncio.sleep(0)
-        self._ready = True
-        #now swap with our features
-        self.features = features
+        return features
