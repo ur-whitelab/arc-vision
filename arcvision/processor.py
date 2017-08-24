@@ -206,7 +206,7 @@ class _TrackerProcessor(Processor):
 
 class _SegmentProcessor(Processor):
     def __init__(self, camera, stride):
-        super().__init__(camera, ['background-subtract', 'background-thresh', 'background-dilate', 'background-open', 'background', 'distance', 'markers', 'watershed', 'boxes'], stride)
+        super().__init__(camera, ['background-subtract', 'background-thresh', 'background-dilate', 'background-open', 'background', 'distance', 'boxes'], stride)
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         self.rect_iter = range(0)
         self.background_processor = BackgroundProcessor(camera)
@@ -219,8 +219,7 @@ class _SegmentProcessor(Processor):
     def _process_frame(self, frame, frame_ind):
         bg = self.filter_background(frame)
         dist_transform = self.filter_distance(bg)
-        markers = self.filter_ws_markers(dist_transform)
-        self.rect_iter = self.watershed(frame, markers)
+        self.rect_iter = self.filter_contours(dist_transform)
         return frame
 
     def segments(self, frame = None):
@@ -236,7 +235,7 @@ class _SegmentProcessor(Processor):
             img -= self.background_processor.avg_background
 
         if name == 'background-subtract':
-            return frame
+            return img
         if self.mode == 'production':
             img = cv2.blur(img, (6,6))
         else:
@@ -295,9 +294,9 @@ class _SegmentProcessor(Processor):
         for c in contours:
             rect = cv2.boundingRect(c)
             #flip around our rectangle
-            rect = (rect[1], rect[0], rect[3], rect[2])
+            #rect = (rect[1], rect[0], rect[3], rect[2])
             # exempt small or large rectangles (> 25 % of screen)
-            if(len(pixels) < 5 or rect[2] * rect[3] < 20 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
+            if(rect[2] * rect[3] < 100 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
                 continue
             yield rect
 
@@ -310,7 +309,7 @@ class _SegmentProcessor(Processor):
             #flip around our rectangle
             rect = (rect[1], rect[0], rect[3], rect[2])
             # exempt small or large rectangles (> 25 % of screen)
-            if(len(pixels) < 5 or rect[2] * rect[3] < 20 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
+            if(len(pixels) < 5 or rect[2] * rect[3] < 100 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
                 continue
             yield rect
 
@@ -347,16 +346,7 @@ class _SegmentProcessor(Processor):
         if name == 'distance':
             return dist_transform
 
-        markers = self.filter_ws_markers(dist_transform)
-        if name == 'markers':
-            return markers * 30000
-
-        if name == 'watershed':
-            ws_markers = cv2.watershed(frame, markers)
-            frame[ws_markers == -1] = (255, 255, 0)
-            return frame
-
-        for rect in self.watershed(frame, markers):
+        for rect in self.filter_contours(dist_transform):
             cv2.rectangle(frame, (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3]), (255, 255, 0), 1)
         return frame
 
@@ -364,12 +354,12 @@ class _SegmentProcessor(Processor):
 class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
     def __init__(self, camera, query_images=[], labels=None, stride=10,
-                 threshold=1.0, template_size=256, min_match=6, weights=[1, 2]):
+                 threshold=1.0, template_size=256, min_match=8, weights=[1, 2]):
 
         #we have a specific order required
         #set-up our tracker
         # give estimate of our stride
-        #self.tracker = _TrackerProcessor(camera, stride * 2 * len(query_images))
+        self.tracker = _TrackerProcessor(camera, stride * 2 * len(query_images))
         #then our segmenter
         self.segmenter = _SegmentProcessor(camera, stride)
         #then us
@@ -385,7 +375,7 @@ class DetectionProcessor(Processor):
 
 
         # Initiate descriptors
-        self.desc = cv2.BRISK_create(octaves=3, thresh=15)
+        self.desc = cv2.KAZE_create()
         #set-up our matcher
         self.matcher = cv2.BFMatcher()
 
@@ -498,7 +488,7 @@ class DetectionProcessor(Processor):
             if(des is not None and len(des) > 2):
                 features = await self._process_frame_view(features, frame, kp, des)
 
-        #now swap with our features
+        #now swap with our features        
         for f in self.features:
             if(len(self.features[f]) > 0):
                 self.features = features
@@ -551,7 +541,7 @@ class DetectionProcessor(Processor):
                             'kpcolor': [cm(x.distance / good[-1].distance) for x in good],
                             'score': score})
                         # register it with our tracker
-                        # self.tracker.track(frame, np.int32(dst_poly), t['name'])
+                        self.tracker.track(frame, np.int32(dst_poly), t['name'])
             except cv2.error:
                 #not enough points
                 await asyncio.sleep(0)
