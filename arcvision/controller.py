@@ -114,8 +114,10 @@ def main():
     parser.add_argument('--crop', help='two x,y points defining crop', dest='crop', nargs=4)
 
     args = parser.parse_args()
-
-    crop = [int(c) for c in args.crop]
+    if args.crop is not None:
+        crop = [int(c) for c in args.crop]
+    else:
+        crop = None
     init(args.video_filename,
          args.server_port,
          args.zmq_sub_port,

@@ -23,7 +23,8 @@ class CropProcessor(Processor):
         if self.mask is None:
             self.mask = np.zeros(frame.shape, dtype=np.uint8)
             cv2.rectangle(self.mask, *self.rect, (255,)*3, thickness=cv2.FILLED)
-        frame = cv2.bitwise_and(frame, self.mask)
+        #frame = cv2.bitwise_and(frame, self.mask)
+        frame = frame[ self.rect[0][1]:self.rect[1][1], self.rect[0][0]:self.rect[1][0]]
         return frame
 
     async def decorate_frame(self, frame):
@@ -31,14 +32,16 @@ class CropProcessor(Processor):
         if self.dmask is None:
             self.dmask = np.zeros(frame.shape, dtype=np.uint8)
             cv2.rectangle(self.dmask, *self.rect, (255,255,255), thickness=cv2.FILLED)
-        frame = cv2.bitwise_and(frame, self.dmask)
+        #frame = cv2.bitwise_and(frame, self.dmask)
+        frame = frame[ self.rect[0][1]:self.rect[1][1], self.rect[0][0]:self.rect[1][0],:  ]
         return frame
 
 class PreprocessProcessor(Processor):
     '''Substracts and computes background'''
-    def __init__(self, camera, stride=1, bg_stride=16):
+    def __init__(self, camera, stride=1, gamma=2.5):
         super().__init__(camera)
         self.stride = stride
+
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
@@ -47,8 +50,10 @@ class PreprocessProcessor(Processor):
     async def decorate_frame(self, frame):
         # go to BW but don't remove channel
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
         frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         return frame
+
 
 class BackgroundProcessor(Processor):
     '''Substracts and computes background'''
@@ -74,7 +79,7 @@ class BackgroundProcessor(Processor):
     async def decorate_frame(self, frame):
         return frame * self.fg_mask[:,:,np.newaxis]
 
-class TrackerProcessor(Processor):
+class _TrackerProcessor(Processor):
     def __init__(self, camera, detector_stride, delete_threshold=0.2, stride=1):
         super().__init__(camera)
         self.tracking = []
@@ -88,7 +93,7 @@ class TrackerProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
         delete = []
-        for t in self.tracking:
+        for i,t in enumerate(self.tracking):
             status,bbox = t['tracker'].update(frame)
             #update polygon
             if(status):
@@ -98,8 +103,12 @@ class TrackerProcessor(Processor):
 
             # check obs counts
             if t['observed'] /  (self.ticks - t['start']) < self.min_obs_per_tick:
-                delete.append(t)
-        [self.tracking.remove(t) for t in delete]
+                delete.append(i)
+        offset = 0
+        delete.sort()
+        for i in delete:
+            del self.tracking[i - offset]
+            offset += 1
 
         return frame
 
@@ -142,7 +151,7 @@ class TrackerProcessor(Processor):
         if name in self.names:
             #we need to make sure we don't have an existing example
             for t in self.tracking:
-                if t['id'].split('-')[0] == name and TrackerProcessor._intersecting(bbox, t['bbox']):
+                if t['id'].split('-')[0] == name and _TrackerProcessor._intersecting(bbox, t['bbox']):
                     # found existing one
                     # add to count
                     t['observed'] += 1
@@ -176,40 +185,63 @@ class TrackerProcessor(Processor):
         self.tracking.append(track_obj)
         return True
 
-class SegmentProcessor(Processor):
-    def __init__(self, camera):
+class _SegmentProcessor(Processor):
+    def __init__(self, camera, stride):
         super().__init__(camera)
+        self.stride = stride
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
 
     async def process_frame(self, frame, frame_ind):
-        pass
+        return frame
 
     async def decorate_frame(self, frame):
+        frame = cv2.pyrMeanShiftFiltering(frame, 21, 51)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        #gray = self.clahe.apply(gray)
         ret, thresh = cv2.threshold(gray,0,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
         # noise removal
         kernel = np.ones((3,3),np.uint8)
         opening = cv2.morphologyEx(thresh,cv2.MORPH_OPEN,kernel, iterations = 2)
-        # sure background area
-        sure_bg = cv2.dilate(opening,kernel,iterations=3)
+        sure_bg = cv2.erode(opening, kernel, iterations = 10)
+        if(np.mean(sure_bg) > 255 / 2):
+            sure_bg[sure_bg == 255] = 5
+            sure_bg[sure_bg == 0] = 255
+            sure_bg[sure_bg == 5] = 0
+
         # Finding sure foreground area
-        dist_transform = cv2.distanceTransform(opening,cv2.DIST_L2,5)
+        dist_transform = cv2.distanceTransform(sure_bg, cv2.DIST_L2,5)
         ret, sure_fg = cv2.threshold(dist_transform,0.7*dist_transform.max(),255,0)
+
         # Finding unknown region
         sure_fg = np.uint8(sure_fg)
         unknown = cv2.subtract(sure_bg,sure_fg)
-        # Marker labelling
+
         ret, markers = cv2.connectedComponents(sure_fg)
         # Add one to all labels so that sure background is not 0, but 1
         markers = markers+1
         # Now, mark the region of unknown with zero
         markers[unknown==255] = 0
-        markers = cv2.watershed(img,markers)
-        img[markers == -1] = [255,0,0]
+        markers = cv2.watershed(frame,markers)
+        frame[markers == -1] = [255,255,0]
+        for i in np.unique(markers):
+            pixels = np.argwhere(markers == i)
+            if(len(pixels) > 5):
+                rect = cv2.boundingRect(pixels)
+                cv2.rectangle(frame, (rect[0], rect[0] + rect[2]), (rect[1], rect[1] + rect[3]), (255, 255, 255), 1)
+        return sure_bg
 
 
 class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
     def __init__(self, camera, query_images=[], labels=None, stride=10,
                  threshold=1.0, template_size=256, min_match=5, weights=[1, 2]):
+
+        #we have a specific order required
+        #set-up our tracker
+        self.tracker = _TrackerProcessor(camera, stride)
+        #then our segmenter
+        _SegmentProcessor(camera, stride)
+        #then us
         super().__init__(camera)
         #load template images
         if labels is None:
@@ -255,9 +287,6 @@ class DetectionProcessor(Processor):
             t['desc'] = self.desc.detectAndCompute(t['img'], None)
             if t['desc'] is None or len(t['desc'][1]) == 0:
                 raise ValueError('Unable to compute descriptors on {}'.format(t['path']))
-
-        #set-up our tracker
-        self.tracker = TrackerProcessor(camera, stride)
 
 
 
