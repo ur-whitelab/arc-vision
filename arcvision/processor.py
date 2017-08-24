@@ -201,7 +201,6 @@ class _SegmentProcessor(Processor):
         bg = self.filter_background(frame)
         dist_transform = self.filter_distance(bg)
         markers = self.filter_ws_markers(dist_transform)
-        ws_markers = cv2.watershed(frame, markers)
         self.rect_iter = self.watershed(frame, markers)
         return frame
 
@@ -259,6 +258,30 @@ class _SegmentProcessor(Processor):
                 continue
             yield rect
 
+    def polygon(self, frame):
+        bg = self.filter_background(frame)
+        dist_transform = self.filter_distance(bg)
+        markers = self.filter_ws_markers(dist_transform)
+        ws_markers = cv2.watershed(frame, markers)
+        frame[ws_markers == -1] = (255, 255, 0)
+        #sort based on size
+        pixels = [np.flip(np.argwhere(ws_markers == i), axis=1) for i in range(1, np.max(ws_markers))]
+        def key(x):
+            r = cv2.boundingRect(x)
+            return r[2] * r[3]
+        pixels.sort(key = key, reverse=True)
+        for p in pixels:
+            # exempt small or large rectangles (> 25 % of screen)
+            rect = cv2.boundingRect(p)
+            if(len(p) < 5 or rect[2] * rect[3] < 20 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
+                continue
+            # once we find one, use it
+            hull = cv2.convexHull(p)
+            cv2.polylines(frame, [hull], True, (0,0,255), 3)
+            return frame, hull
+
+        print('Could not identify polygon. See processed file.')
+        return frame, frame.shape[:2]
 
     async def decorate_frame(self, frame, name):
         bg = self.filter_background(frame)
@@ -303,11 +326,11 @@ class DetectionProcessor(Processor):
         self.templates = []
         for k,i in zip(labels, query_images):
             d = {'name': k, 'path': i}
-            img = cv2.imread(i, 0)
+            img = cv2.imread(i)
             #h = int(template_size / img.shape[1] * img.shape[0])
             #img = cv2.resize(img, (template_size, h))
             # get contours
-            processed, poly = find_template_contour(img)
+            processed, poly = self.segmenter.polygon(img)
             # write it out so we can double check
             cv2.imwrite(i.split('.jpg')[0] + '_contours.jpg', processed)
             d['img'] = processed
