@@ -10,6 +10,8 @@ from .camera import Camera
 from .server import start_server
 from .calibration import Calibrate
 from .processor import *
+from .utils import *
+import json
 
 from .protobufs.reactors_pb2 import ReactorSystem
 
@@ -46,26 +48,38 @@ class Controller:
         self.vision_state.time = 0
 
         #settings
-        self.settings = {'mode': 'background', 'pause': False}
+        self.settings = {'mode': 'background', 'pause': False, 'descriptor': 'BRISK'}
         self.modes = ['background', 'detection', 'training']
+        self.descriptors = ['BRISK', 'AKAZE']
         self.processors = []
         self.background = None
+
+    def get_state_json(self):
+        if self.settings['mode'] == 'training':
+            self.settings['training_poly_len'] = self.processors[0].poly_len
+            self.settings['training_rect_len'] = self.processors[0].rect_len
+            self.settings['training_rect_index'] = self.processors[0].rect_index
+            self.settings['training_poly_index'] = self.processors[0].poly_index
+        return json.dumps(self.__dict__, default=lambda x: '')
+
 
     async def handle_start(self, video_filename, server_port, template_dir, crop):
         '''Begin processing webcam and updating state'''
 
         self.cam = Camera(video_filename)
-        self.template_dir = template_dir
+        self.img_db = ImageDB(template_dir)
         start_server(self.cam, self, server_port)
         print('Started arcvision server')
 
-        sys.stdout.flush()
-
+        # setup initial streams
         if crop is not None:
             CropProcessor(self.cam, crop)
+        self.processors = [BackgroundProcessor(self.cam)]
 
-        await self.update_settings(self.settings)
+        self.update_settings(self.settings)
+
         while True:
+            sys.stdout.flush()
             await self.update_loop()
 
     def _reset_processors(self):
@@ -78,37 +92,23 @@ class Controller:
         [x.close() for x in self.processors]
         self.processors = []
 
-    def _start_detection(self, template_dir):
-        #load images
-        paths = []
-        labels = []
-        original = os.getcwd()
-        template_dir = os.path.abspath(template_dir)
-        try:
-            os.chdir(template_dir)
-            print('Found these template images in {}:'.format(template_dir))
-            for i in glob.glob('*.jpg', recursive=True):
-                # do not touch the debug images
-                if(i.find('contours') == -1):
-                    labels.append(i.split('.jpg')[0])
-                    paths.append(os.path.join(template_dir, i))
-                    print('\t' + labels[-1])
-
-        finally:
-            os.chdir(original)
+    def _start_detection(self):
+        return
         self.processors = [DetectionProcessor(self.cam, self.background, paths, labels)]
 
-    async def update_settings(self, settings):
-        if 'mode' in settings:
+    def update_settings(self, settings):
+        if 'mode' in settings and settings['mode'] != self.settings['mode']:
             mode = settings['mode']
 
             if mode == 'detection':
                 self._reset_processors()
-                self._start_detection(self.template_dir)
-
+                self._start_detection()
             elif mode == 'background':
                 self._reset_processors()
                 self.processors = [BackgroundProcessor(self.cam)]
+            elif mode == 'training':
+                self._reset_processors()
+                self.processors = [TrainingProcessor(self.cam, self.background, self.img_db, self.descriptor)]
             else:
                 # invalid
                 mode = self.settings['mode']
@@ -117,14 +117,42 @@ class Controller:
 
         if 'pause' in settings:
             self.settings['pause'] = settings['pause']
+            if self.settings['pause']:
+                self.cam.pause()
+            else:
+                self.cam.play()
+        if 'action' in settings:
+            action = settings['action']
+            if action == 'complete_background' and self.settings['mode'] == 'background':
+                self.processors[0].pause()
+            if action == 'start_background' and self.settings['mode'] == 'background':
+                self._reset_processors()
+                self.processors = [BackgroundProcessor(self.cam)]
+            elif action == 'set_rect' and self.settings['mode'] == 'training':
+                self.processors[0].rect_index = int(self.settings['training_rect_index'])
+            elif action == 'set_poly' and self.settings['mode'] == 'training':
+                self.processors[0].poly_index = int(self.settings['training_poly_index'])
+            elif action == 'label' and self.settings['mode'] == 'training':
+                self.processors[0].capture(self.cam.get_frame(), self.settings['training_label'])
+                # update our DB
+                self.templates = [x.label for x in self.img_db]
+
+        if 'descriptor' in settings:
+            desc = settings['descriptor']
+            if desc == 'BRISK':
+                self.descriptor = cv2.BRISK_create()
+            elif desc == 'AKAZE':
+                self.descriptor = cv2.AKAZE_create()
+            else:
+                desc = self.settings['descriptor']
+            self.settings['descriptor'] = desc
 
         # add our stream names now that everything has been added to the camera
         self.stream_names = self.cam.stream_names
-        print(self.settings)
-        sys.stdout.flush()
+        print(settings)
 
     async def update_state(self):
-        if not self.settings['pause'] and await self.cam.update():
+        if await self.cam.update():
             self.stream_number = len(self.cam.frame_processors) + 1
             #TODO: Insert update code here
             self.vision_state.time += 1
@@ -140,6 +168,7 @@ class Controller:
             await self.pub_sock.send_multipart(['vision-update'.encode(), state.SerializeToString()])
             #exponential moving average of update frequency
             self.frequency = self.frequency * 0.8 +  0.2 / (time.time() - startTime)
+
 
 def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, cc_hostname, template_dir, crop):
     c = Controller(zmq_sub_port, zmq_pub_port, cc_hostname)

@@ -30,6 +30,7 @@ class Camera:
         self.decorate_name = 'raw'
         self.frame_ind = 1
         self.stream_names = {'Base': ['raw']}
+        self.paused = False
 
         self.cap = cv2.VideoCapture(self.video_file)
 
@@ -42,7 +43,13 @@ class Camera:
 
     def remove_frame_processor(self, p):
         '''Remove a frame processor object from being updated'''
-        self.frame_processors.remove(p)
+        for i,f in enumerate(self.frame_processors):
+            if f == p:
+                self.frame_processors.remove(p)
+                break
+        if i >= self.decorate_index:
+            self.decorate_index -= 1
+
 
 
     async def _process_frame(self):
@@ -81,6 +88,19 @@ class Camera:
 
         self.sem.release()
 
+    def pause(self):
+        self.paused = True
+
+        # try to read. If we fail, we re-use the last frame
+        # which could have processing artefacts. Best we can do though
+        ret, frame = self.cap.read()
+        if frame is not None:
+            self.frame = frame
+        else:
+            self.frame = frame
+
+    def play(self):
+        self.paused = False
     async def update(self):
         '''Process an update from the camera feed'''
         if self.cap.isOpened():
@@ -90,8 +110,12 @@ class Camera:
             #    print('Completed video, looping again')
             #    self.frame_ind = 1
             #    self.cap = cv2.VideoCapture(self.video_file)
-            ret, frame = self.cap.read()
+            if not self.paused:
+                ret, frame = self.cap.read()
+            else:
+                ret, frame = True, self.frame
             if ret and frame is not None:
+                # normal update
                 self.frame = frame
                 task = asyncio.ensure_future(self._process_frame())
                 self.frame_ind += 1

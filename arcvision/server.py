@@ -37,6 +37,9 @@ class StreamHandler(tornado.web.RequestHandler):
         Build MJPEG stream using the multipart HTTP header protocol
         '''
         # Set http header fields
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         self.set_header('Cache-Control',
                         'no-store, no-cache, must-revalidate, pre-check=0, post-check=0, max-age=0')
         self.set_header('Connection', 'close')
@@ -62,36 +65,58 @@ class StreamHandler(tornado.web.RequestHandler):
                 self.write(img)
                 await tornado.gen.Task(self.flush)
 
+class TemplateHandler(tornado.web.RequestHandler):
+    '''Serves template images'''
+    def initialize(self, controller):
+        self.controller = controller
+
+    async def get(self, template_name):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+
+        templ = self.controller.img_db.get_img(template_name)
+
+        if templ is not None:
+            img = templ.img.copy()
+            cv2.polylines(img, [templ.poly], True, (0,0,255), 2)
+            ret, jpeg = cv2.imencode('.jpg', img)
+            if ret:
+                self.write("Content-type: image/jpeg\r\n")
+                self.write("Content-length: %s\r\n\r\n" % len(img))
+                self.write(jpeg.tostring())
+
 class StatsHandler(tornado.web.RequestHandler):
-    '''Provides stats on speed of processing'''
+    '''Provides info about controller processing'''
     def initialize(self, controller):
         self.controller = controller
 
     async def get(self):
         self.set_header("Access-Control-Allow-Origin", "*")
         self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-        self.set_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-        self.write(json.dumps(self.controller.__dict__, default=lambda x: ''))
+        self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+        self.write(self.controller.get_state_json())
 
 class SettingsHandler(tornado.web.RequestHandler):
     def initialize(self, controller):
         self.controller = controller
 
-    async def post(self):
+    def post(self):
         self.set_header("Access-Control-Allow-Origin", "*")
         self.set_header("Access-Control-Allow-Headers", "x-requested-with")
-        self.set_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         new_settings = json.loads(self.request.body.decode())
-        await self.controller.update_settings(new_settings)
+        self.controller.update_settings(new_settings)
         self.write('success')
 
 
 def start_server(camera, controller, port=8888):
     app = tornado.web.Application([
         (r"/",HtmlPageHandler),
-        (r"/([a-z\-]+)/stream.mjpg", StreamHandler, {'camera': camera}),
+        (r"/stream/([a-z\-]+).mjpg", StreamHandler, {'camera': camera}),
         (r"/stats", StatsHandler, {'controller': controller}),
-        (r"/settings", SettingsHandler, {'controller': controller})
+        (r"/settings", SettingsHandler, {'controller': controller}),
+        (r"/template/(a-z\-])+", TemplateHandler, {'controller': controller})
     ])
     print('Starting server on port {}'.format(port))
     app.listen(port)
