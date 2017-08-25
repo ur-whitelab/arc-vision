@@ -73,12 +73,25 @@ class StatsHandler(tornado.web.RequestHandler):
         self.set_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
         self.write(json.dumps(self.controller.__dict__, default=lambda x: ''))
 
+class SettingsHandler(tornado.web.RequestHandler):
+    def initialize(self, controller):
+        self.controller = controller
+
+    async def post(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "x-requested-with")
+        self.set_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        new_settings = json.loads(self.request.body.decode())
+        await self.controller.update_settings(new_settings)
+        self.write('success')
+
 
 def start_server(camera, controller, port=8888):
     app = tornado.web.Application([
         (r"/",HtmlPageHandler),
         (r"/([a-z\-]+)/stream.mjpg", StreamHandler, {'camera': camera}),
-        (r"/stats", StatsHandler, {'controller': controller})
+        (r"/stats", StatsHandler, {'controller': controller}),
+        (r"/settings", SettingsHandler, {'controller': controller})
     ])
     print('Starting server on port {}'.format(port))
     app.listen(port)

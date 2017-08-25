@@ -40,10 +40,9 @@ class Camera:
         self.frame_processors.append(p)
         self.stream_names[p.__class__.__name__] = p.streams
 
-    def remove_frame_fxn(self, p):
+    def remove_frame_processor(self, p):
         '''Remove a frame processor object from being updated'''
-        i = self.frame_processors.index(p)
-        del self.frame_processors[i]
+        self.frame_processors.remove(p)
 
 
     async def _process_frame(self):
@@ -108,9 +107,10 @@ class Camera:
         cv2.imwrite(file_location,frame)
 
     def get_decorated_frame(self, name):
-        if name == 'raw':
+        if name == 'raw' or len(self.frame_processors) == 0:
             self.decorate_index = 0
             return self.decorated_frame
+
         for i, p in enumerate(self.frame_processors):
             if name in p.streams:
                 break

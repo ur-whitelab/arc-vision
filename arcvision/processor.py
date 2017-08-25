@@ -11,6 +11,10 @@ class Processor:
         self.streams = streams
         self.stride = stride
         camera.add_frame_processor(self)
+        self.camera = camera
+
+    def close(self):
+        self.camera.remove_frame_processor(self)
 
 class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
@@ -59,11 +63,19 @@ class PreprocessProcessor(Processor):
 
 class BackgroundProcessor(Processor):
     '''Substracts and computes background'''
-    def __init__(self, camera, countdown=30):
+    def __init__(self, camera):
         super().__init__(camera, ['background-removal'], 1)
         self.avg_background = None
-        self.countdown = countdown
-        self.countdown_start = countdown
+        self.count = 0
+
+    def get_background(self):
+        if self.avg_background is None:
+            return None
+        result = self.avg_background // self.count
+        result = result.astype(np.uint8)
+        result = cv2.blur(result, (3,3))
+        return result
+
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
@@ -71,35 +83,15 @@ class BackgroundProcessor(Processor):
         if self.avg_background is None:
             self.avg_background = np.empty(frame.shape, dtype=np.uint32)
             self.avg_background[:] = 0
-
-        if self.countdown > 0:
-            self.avg_background += frame
-            self.countdown -= 1
-            if self.countdown == 0:
-                self.avg_background //= self.countdown_start
-
-                self.avg_background = self.avg_background.astype(np.uint8)
-
-                kernel = np.ones((5,5),np.uint8)
-                self.avg_background = cv2.morphologyEx(self.avg_background,cv2.MORPH_OPEN,kernel, iterations = 2)
-
-
-
+        self.avg_background += frame
+        self.count += 1
         return frame
 
 
     async def decorate_frame(self, frame, name):
+        return frame - self.get_background()
 
-        if self.countdown > 0:
-            frame = self.avg_background.copy().astype(np.uint8)
-            cv2.putText(frame,
-                        'Processing Background - {}'.format(self.countdown),
-                        (0, frame.shape[1] // 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
-
-        return frame
-
-class _TrackerProcessor(Processor):
+class TrackerProcessor(Processor):
     def __init__(self, camera, detector_stride, delete_threshold=0.2, stride=1):
         super().__init__(camera, ['track'], stride)
         self.tracking = []
@@ -107,7 +99,8 @@ class _TrackerProcessor(Processor):
         # need to keep our own ticks because
         # we don't know frame index when track() is called
         self.ticks = 0
-        self.min_obs_per_tick = self.stride / detector_stride * delete_threshold
+        if detector_stride > 0:
+            self.min_obs_per_tick = self.stride / detector_stride * delete_threshold
 
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
@@ -163,14 +156,12 @@ class _TrackerProcessor(Processor):
               return True
         return False
 
-    def track(self, frame, poly, name):
-
-        bbox = cv2.boundingRect(poly)
+    def track(self, frame, bbox, poly, name):
 
         if name in self.names:
             #we need to make sure we don't have an existing example
             for t in self.tracking:
-                if t['id'].split('-')[0] == name and _TrackerProcessor._intersecting(bbox, t['bbox']):
+                if t['id'].split('-')[0] == name and TrackerProcessor._intersecting(bbox, t['bbox']):
                     # found existing one
                     # add to count
                     t['observed'] += 1
@@ -204,13 +195,11 @@ class _TrackerProcessor(Processor):
         self.tracking.append(track_obj)
         return True
 
-class _SegmentProcessor(Processor):
-    def __init__(self, camera, stride, max_segments):
+class SegmentProcessor(Processor):
+    def __init__(self, camera, background, stride, max_segments):
         super().__init__(camera, ['background-subtract', 'background-thresh', 'background-dilate', 'background-open', 'background', 'distance', 'boxes'], stride)
-        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         self.rect_iter = range(0)
-        self.background_processor = BackgroundProcessor(camera)
-        self.mode = 'preprocess'
+        self.background = background
         self.max_segments = max_segments
 
     async def process_frame(self, frame, frame_ind):
@@ -232,15 +221,11 @@ class _SegmentProcessor(Processor):
         #img = cv2.pyrMeanShiftFiltering(frame, 21, 51)
 
         img = frame.copy()
-        if self.mode == 'production':
-            img -= self.background_processor.avg_background
+        img -= self.background
 
         if name == 'background-subtract':
             return img
-        if self.mode == 'production':
-            img = cv2.blur(img, (6,6))
-        else:
-            img = cv2.blur(img, (3,3))
+        img = cv2.blur(img, (6,6))
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         #bg = th2 = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -249,10 +234,7 @@ class _SegmentProcessor(Processor):
             return bg
         # noise removal
         kernel = np.ones((3,3),np.uint8)
-        if(self.mode == 'preprocess'):
-            bg = cv2.erode(bg, kernel, iterations = 2)
-        else:
-            bg = cv2.dilate(bg, kernel, iterations = 4)
+        bg = cv2.dilate(bg, kernel, iterations = 4)
         if name == 'background-dilate':
             return bg
         bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 2)
@@ -267,10 +249,7 @@ class _SegmentProcessor(Processor):
         return bg
 
     def filter_distance(self, frame):
-        if self.mode == 'preprocess':
-            dist_transform = cv2.distanceTransform(frame, cv2.DIST_L2,0)
-        else:
-            dist_transform = cv2.distanceTransform(frame, cv2.DIST_L2,5)
+        dist_transform = cv2.distanceTransform(frame, cv2.DIST_L2,5)
         dist_transform = cv2.normalize(dist_transform, dist_transform, 0, 255, cv2.NORM_MINMAX)
 
         #create distance tranform contours
@@ -363,15 +342,15 @@ class _SegmentProcessor(Processor):
 
 class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
-    def __init__(self, camera, query_images=[], labels=None, stride=10,
-                 threshold=1.0, template_size=256, min_match=8, weights=[3, 0.2, -10, 1], max_segments=10):
+    def __init__(self, camera, background, query_images=[], labels=None, stride=10,
+                 threshold=0.8, template_size=256, min_match=6, weights=[3, 0.2, -3, -10, 2], max_segments=10):
 
         #we have a specific order required
         #set-up our tracker
         # give estimate of our stride
-        self.tracker = _TrackerProcessor(camera, stride * 2 * len(query_images))
+        self.tracker = TrackerProcessor(camera, stride * 2 * len(query_images))
         #then our segmenter
-        self.segmenter = _SegmentProcessor(camera, stride, max_segments)
+        self.segmenter = SegmentProcessor(camera, background, stride, max_segments)
         #then us
         super().__init__(camera, ['keypoints', 'identify'], stride)
 
@@ -385,7 +364,7 @@ class DetectionProcessor(Processor):
 
 
         # Initiate descriptors
-        self.desc = cv2.KAZE_create()
+        self.desc = cv2.BRISK_create(thresh=20)
         #set-up our matcher
         self.matcher = cv2.BFMatcher()
 
@@ -421,11 +400,10 @@ class DetectionProcessor(Processor):
             rgba = [int(x * 255) for x in rgba]
             t['color'] = rgba[:-1]
 
-
-        #switch out of prerocess mode
-        self.segmenter.mode = 'production'
-
-
+    def close(self):
+        super().close()
+        self.segmenter.close()
+        self.tracker.close()
 
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
@@ -537,7 +515,9 @@ class DetectionProcessor(Processor):
                     dst_pts = np.float32([ kp[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
 
                     # use homography to find matrix transform between them
-                    M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+                    M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,3.0)
+                    if M is None:
+                        continue
 
                     src_poly = np.float32(t['poly']).reshape(-1,1,2)
                     dst_poly = cv2.perspectiveTransform(src_poly,M)
@@ -549,7 +529,8 @@ class DetectionProcessor(Processor):
                     score = len(good) / len(descriptors[0]) * self.weights[0] + \
                             area / perimter * self.weights[1] + \
                             (dst_bbox[2] > bounds[2] or dst_bbox[3] >  bounds[3]) * self.weights[2] + \
-                            self.weights[3]
+                            (dst_bbox[2] * dst_bbox[3] < 5) * self.weights[3] + \
+                            self.weights[4]
                     if score > 0:
                         cm = plt.cm.get_cmap()
                         features[name] = { 'color': t['color'], 'poly': np.int32(dst_poly),
@@ -557,7 +538,7 @@ class DetectionProcessor(Processor):
                             'kpcolor': [cm(x.distance / good[-1].distance) for x in good],
                             'score': score, 'rect': bounds}
                         # register it with our tracker
-                        # self.tracker.track(frame, np.int32(dst_poly), t['name'])
+                        self.tracker.track(frame, bounds, np.int32(dst_poly), t['name'])
             except cv2.error:
                 #not enough points
                 await asyncio.sleep(0)

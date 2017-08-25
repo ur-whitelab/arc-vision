@@ -5,10 +5,12 @@ import argparse
 import asyncio
 import glob
 import os
+import sys
 from .camera import Camera
 from .server import start_server
 from .calibration import Calibrate
 from .processor import *
+
 from .protobufs.reactors_pb2 import ReactorSystem
 
 
@@ -43,20 +45,40 @@ class Controller:
         self.vision_state = ReactorSystem()
         self.vision_state.time = 0
 
+        #settings
+        self.settings = {'mode': 'background', 'pause': False}
+        self.modes = ['background', 'detection', 'training']
+        self.processors = []
+        self.background = None
 
     async def handle_start(self, video_filename, server_port, template_dir, crop):
         '''Begin processing webcam and updating state'''
 
         self.cam = Camera(video_filename)
+        self.template_dir = template_dir
         start_server(self.cam, self, server_port)
         print('Started arcvision server')
-        import sys
-        sys.stdout.flush()
 
-        PreprocessProcessor(self.cam)
+        sys.stdout.flush()
 
         if crop is not None:
             CropProcessor(self.cam, crop)
+
+        await self.update_settings(self.settings)
+        while True:
+            await self.update_loop()
+
+    def _reset_processors(self):
+
+        for p in self.processors:
+            if p.__class__ == BackgroundProcessor:
+                bg = p.get_background()
+                if bg is not None:
+                    self.background = bg
+        [x.close() for x in self.processors]
+        self.processors = []
+
+    def _start_detection(self, template_dir):
         #load images
         paths = []
         labels = []
@@ -74,22 +96,41 @@ class Controller:
 
         finally:
             os.chdir(original)
+        self.processors = [DetectionProcessor(self.cam, self.background, paths, labels)]
 
-        DetectionProcessor(self.cam, labels=labels, query_images=paths)
+    async def update_settings(self, settings):
+        if 'mode' in settings:
+            mode = settings['mode']
 
+            if mode == 'detection':
+                self._reset_processors()
+                self._start_detection(self.template_dir)
+
+            elif mode == 'background':
+                self._reset_processors()
+                self.processors = [BackgroundProcessor(self.cam)]
+            else:
+                # invalid
+                mode = self.settings['mode']
+
+            self.settings['mode'] = mode
+
+        if 'pause' in settings:
+            self.settings['pause'] = settings['pause']
 
         # add our stream names now that everything has been added to the camera
         self.stream_names = self.cam.stream_names
-
-        while True:
-            await self.update_loop()
+        print(self.settings)
+        sys.stdout.flush()
 
     async def update_state(self):
-        if await self.cam.update():
+        if not self.settings['pause'] and await self.cam.update():
             self.stream_number = len(self.cam.frame_processors) + 1
             #TODO: Insert update code here
             self.vision_state.time += 1
             return self.vision_state
+        #cede control so other upates can happen
+        await asyncio.sleep(0)
         return None
 
     async def update_loop(self):
