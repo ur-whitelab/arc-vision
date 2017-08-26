@@ -46,19 +46,23 @@ class PreprocessProcessor(Processor):
     '''Substracts and computes background'''
     def __init__(self, camera, stride=1, gamma=2.5):
         super().__init__(camera, ['preprocess'], stride)
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+
 
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
-        #return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        return frame
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        equ = self.clahe.apply(frame)
+        #return equ[:,:, np.newaxis]
+        return cv2.cvtColor(equ, cv2.COLOR_GRAY2BGR)
 
     async def decorate_frame(self, frame, name):
         # go to BW but don't remove channel
-        #frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        #frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        return frame
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        equ = self.clahe.apply(frame)
+        equ = cv2.cvtColor(equ, cv2.COLOR_GRAY2BGR)
+        return equ
 
 
 class BackgroundProcessor(Processor):
@@ -99,7 +103,7 @@ class BackgroundProcessor(Processor):
         return frame - self.get_background()
 
 class TrackerProcessor(Processor):
-    def __init__(self, camera, detector_stride, delete_threshold=0.2, stride=1):
+    def __init__(self, camera, detector_stride, delete_threshold_period=1, stride=1):
         super().__init__(camera, ['track'], stride)
         self.tracking = []
         self.names = {}
@@ -107,21 +111,23 @@ class TrackerProcessor(Processor):
         # we don't know frame index when track() is called
         self.ticks = 0
         if detector_stride > 0:
-            self.min_obs_per_tick = self.stride / detector_stride * delete_threshold
+            self.ticks_per_obs = detector_stride * delete_threshold_period / self.stride
 
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
         delete = []
         for i,t in enumerate(self.tracking):
             status,bbox = t['tracker'].update(frame)
+            t['observed'] -= 1
             #update polygon
             if(status):
                 t['delta'][0] = bbox[0] - t['init'][0]
                 t['delta'][1] = bbox[1] - t['init'][1]
                 t['bbox'] = bbox
 
+
             # check obs counts
-            if t['observed'] /  (self.ticks - t['start']) < self.min_obs_per_tick:
+            if t['observed'] < 0:
                 delete.append(i)
         offset = 0
         delete.sort()
@@ -146,43 +152,39 @@ class TrackerProcessor(Processor):
 
             #put note about it
             cv2.putText(frame,
-                        '{}: {:.2} (limit: {:.2})'.format(t['id'], t['observed'] /  (self.ticks - t['start']), self.min_obs_per_tick ),
+                        '{}: {}'.format(t['id'], t['observed']),
                         (0, 60 * (i+ 1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
 
         return frame
 
-    def _intersecting(a, b, threshold=0.25):
-        dx = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
-        dy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
-        if (dx >= 0) and (dy >= 0):
-            # check if most of one square's area is included
-            intArea = dx * dy
-            minArea = min(a[1] * a[3],  b[1] * b[3])
-            if(minArea > 0 and intArea / minArea > threshold):
-              return True
-        return False
-
     def track(self, frame, bbox, poly, name):
 
         if name in self.names:
-            #we need to make sure we don't have an existing example
-            for t in self.tracking:
-                if t['id'].split('-')[0] == name and TrackerProcessor._intersecting(bbox, t['bbox']):
-                    # found existing one
-                    # add to count
-                    t['observed'] += 1
-                    #update polygon and bounding box
-                    t['poly'] = poly
-                    t['init'] = bbox
-                    t['delta'] = np.int32([0,0])
-                    t['tracker'].init(frame, bbox)
-                    return False
-            id = '{}-{}'.format(name, self.names[name])
             self.names[name] += 1
         else:
-            self.names[name] = 0
-            id = '{}-{}'.format(name, self.names[name])
+            self.names[name] = 1
+
+        #we need to make sure we don't have an existing object here
+        for t in self.tracking:
+            if intersecting(bbox, t['bbox']):
+                if name != t['id'].split('-')[0]:
+                    #reclassification
+                    self.names[name] -= 1
+                    t['id'] = '{}-{}'.format(name, self.names[name] - 1)
+                # found existing one
+                # add to count
+                t['observed'] = self.ticks_per_obs
+                #update polygon and bounding box
+                t['poly'] = poly
+                t['init'] = bbox
+                t['delta'] = np.int32([0,0])
+                t['tracker'] = cv2.TrackerMedianFlow_create()
+                t['tracker'].init(frame, bbox)
+                return
+
+
+        id = '{}-{}'.format(name, self.names[name] - 1)
 
         tracker = cv2.TrackerMedianFlow_create()
         status = tracker.init(frame, bbox)
@@ -196,7 +198,7 @@ class TrackerProcessor(Processor):
                      'poly': poly,
                      'init': bbox,
                      'bbox': bbox,
-                     'observed': 1,
+                     'observed': self.ticks_per_obs,
                      'start': self.ticks,
                      'delta': np.int32([0,0])}
         self.tracking.append(track_obj)
@@ -327,14 +329,7 @@ class SegmentProcessor(Processor):
             return r[2] * r[3]
         pixels.sort(key = key, reverse=True)
         # add a polygon of the whole rect first
-        result = [
-                 np.array([
-                     [0,0],
-                    [0,frame.shape[0]],
-                    [frame.shape[1], frame.shape[0]],
-                    [frame.shape[1], 0]
-                    ], np.int32).reshape(-1,1,2)
-                 ]
+        result = []
         segments = 0
         for p in pixels:
             # exempt small rectangles
@@ -349,8 +344,13 @@ class SegmentProcessor(Processor):
             if segments > self.max_segments:
                 break
 
-
-
+        #This code doesn't seem to fill the rectangle and I cannot figure out why
+        result.append(np.array([
+                     [0,0],
+                    [0,frame.shape[0]],
+                    [frame.shape[1], frame.shape[0]],
+                    [frame.shape[1], 0],
+                    ], np.int32).reshape(-1, 1, 2))
         return result
 
     async def decorate_frame(self, frame, name):
@@ -392,6 +392,9 @@ class TrainingProcessor(Processor):
         super().close()
         self.segmenter.close()
 
+    def set_descriptor(self, desc):
+        self.descriptor = desc
+
     async def process_frame(self, frame, frame_ind):
         self.segments = list(self.segmenter.segments(frame))
         self.rect_len = len(self.segments)
@@ -429,7 +432,7 @@ class TrainingProcessor(Processor):
         '''Capture and store the current image'''
         img = rect_view(frame, self.rect)
         # process it
-        kp = self.descriptor.detect(frame, None)
+        kp = self.descriptor.detect(img, None)
         processed = img.copy()
         cv2.drawKeypoints(processed, kp, processed, color=(32,32,32), flags=0)
         cv2.polylines(processed, [self.poly], True, (0,0,255), 3)
@@ -440,7 +443,7 @@ class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
     def __init__(self, camera, background, img_db, descriptor, stride=10,
                  threshold=0.8, template_size=256, min_match=6,
-                 weights=[3, 0.2, -3, -10, 3], max_segments=10,
+                 weights=[3, -1, -1, -10, 5], max_segments=10,
                  track=True):
 
         #we have a specific order required
@@ -484,6 +487,11 @@ class DetectionProcessor(Processor):
         super().close()
         self.segmenter.close()
         self.tracker.close()
+
+    def set_descriptor(self, desc):
+        self.desc = desc
+        for i, t in enumerate(self.templates):
+            t.keypoints, t.features = self.desc.detectAndCompute(t.img, None)
 
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
@@ -557,6 +565,7 @@ class DetectionProcessor(Processor):
                 name = t.label
                 descriptors = t.keypoints, t.features
 
+
                 matches = self.matcher.knnMatch(descriptors[1], des, k=2)
                 # store all the good matches as per Lowe's ratio test.
                 good = []
@@ -581,11 +590,11 @@ class DetectionProcessor(Processor):
                     dst_bbox = cv2.boundingRect(dst_poly)
 
                     # check if the polygon is actually good
-                    area = cv2.contourArea(dst_poly)
+                    area = max(0.01, cv2.contourArea(dst_poly))
                     perimter = max(0.01, cv2.arcLength(dst_poly, True))
-                    score = len(good) / len(descriptors[0]) * self.weights[0] + \
-                            area / perimter * self.weights[1] + \
-                            (dst_bbox[2] > bounds[2] or dst_bbox[3] >  bounds[3]) * self.weights[2] + \
+                    score = len(good) / len(des) * self.weights[0] + \
+                            perimter / area * self.weights[1] + \
+                            (dst_bbox[2] / bounds[2] - 1 + dst_bbox[3] /  bounds[3] - 1) * self.weights[2] + \
                             (dst_bbox[2] * dst_bbox[3] < 5) * self.weights[3] + \
                             self.weights[4]
                     if score > 0:

@@ -74,6 +74,7 @@ class Controller:
         # setup initial streams
         if crop is not None:
             CropProcessor(self.cam, crop)
+        #PreprocessProcessor(self.cam)
         self.processors = [BackgroundProcessor(self.cam)]
 
         self.update_settings(self.settings)
@@ -148,7 +149,9 @@ class Controller:
 
             self.settings['descriptor'] = desc
             if self.settings['mode'] == 'training':
-                self.processors[0].descriptor = self.descriptor
+                self.processors[0].set_descriptor(self.descriptor)
+            elif self.settings['mode'] == 'detection':
+                self.processors[0].set_descriptor(self.descriptor)
             self.img_db.set_descriptor(self.descriptor)
 
         # add our stream names now that everything has been added to the camera

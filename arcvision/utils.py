@@ -23,6 +23,11 @@ class ImageDB:
             del odict['features']
             return odict
 
+        def __setstate__(self, odict):
+            self.__dict__.update(odict)
+            self.keypoints = None
+            self.features = None
+
     # --- end Image Class
 
     def __init__(self, template_dir, load=True):
@@ -121,3 +126,14 @@ def draw_rectangle(frame, rect, *args):
     rect = [int(r) for r in rect]
     cv2.rectangle(frame, (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3]), *args)
 
+
+def intersecting(a, b, threshold=0.25):
+    dx = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    dy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    if (dx >= 0) and (dy >= 0):
+        # check if most of one square's area is included
+        intArea = dx * dy
+        minArea = min(a[2] * a[3],  b[2] * b[3])
+        if(minArea > 0 and intArea / minArea > threshold):
+            return True
+    return False

@@ -73,7 +73,7 @@ class Camera:
                 assert self.frame is not None, \
                     'Processer {} returned None on Process Frame {}'.format(type(p).__name__, self.frame_ind)
 
-                assert self.frame.shape[-1] == start_dims[-1], \
+                assert len(self.frame.shape) == len(start_dims), \
                     'Processor {} modified frame channel from {} to {}'.format(type(p), start_dims, self.frame.shape)
             #if we are updating the decorated frame, then we must
             if(i < self.decorate_index and update_decorated):
