@@ -8,12 +8,21 @@ class ImageDB:
 
     class Image:
         '''POD store of image data'''
-        def __init__(self, path, img, label, poly, keypoints):
+        def __init__(self, path, img, label, poly, keypoints = None):
             self.img = img
             self.label = label
             self.poly = poly
-            self.keypoints = keypoints
             self.path = path
+            self.keypoints = keypoints
+            self.features = None
+            self.color = (255,255,255)
+        def __getstate__(self):
+            # remove keypoints from pickle
+            odict = self.__dict__
+            del odict['keypoints']
+            del odict['features']
+            return odict
+
     # --- end Image Class
 
     def __init__(self, template_dir, load=True):
@@ -32,7 +41,7 @@ class ImageDB:
             print('Found these pre-processed images in {}:'.format(template_dir))
             for i in glob.glob('**/*.pickle', recursive=True):
                 with open(os.path.join(template_dir, i), 'rb') as f:
-                    img = pickle.load()
+                    img = pickle.load(f)
                     self.images.append(img)
                     print('\t' + i)
 
@@ -42,14 +51,21 @@ class ImageDB:
     def __iter__(self):
         return self.images.__iter__()
 
-    def get_img(self, label):
-        return filter(lambda s: s.label == label, self.images)[0]
+    def __len__(self):
+        return len(self.images)
 
-    def store_img(self, img, label, poly, keypoints, processed_img = None, rel_path = None):
+    def get_img(self, label):
+        return filter(lambda s: s.label == label, self.images)
+
+    def set_descriptor(self, descriptor):
+        for img in self:
+            img.keypoints = descriptor.detect(img.img)
+
+
+    def store_img(self, img, label, poly, keypoints = None, processed_img = None, rel_path = None):
         '''
             img: the image
             poly: polygon points
-            keypoints: keypoints for feature detection
             path: path ending with name (not extension) which will be used for prepending pickle, processed, etc
             label: name
             processed_img: the processed image. Will be saved for reference

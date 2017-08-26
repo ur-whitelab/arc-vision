@@ -74,7 +74,7 @@ class BackgroundProcessor(Processor):
             return None
         result = self.avg_background // self.count
         result = result.astype(np.uint8)
-        result = cv2.blur(result, (3,3))
+        result = cv2.blur(result, (5,5))
         return result
 
     def pause(self):
@@ -327,7 +327,16 @@ class SegmentProcessor(Processor):
             r = cv2.boundingRect(x)
             return r[2] * r[3]
         pixels.sort(key = key, reverse=True)
-        result = []
+        # add a polygon of the whole rect first
+        result = [
+                 np.array([
+                     [0,0],
+                    [0,frame.shape[0]],
+                    [frame.shape[1], frame.shape[0]],
+                    [frame.shape[1], 0]
+                    ], np.int32).reshape(-1,1,2)
+                 ]
+        segments = 0
         for p in pixels:
             # exempt small rectangles
             rect = cv2.boundingRect(p)
@@ -337,11 +346,13 @@ class SegmentProcessor(Processor):
             hull = cv2.convexHull(p)
             result.append((hull, rect))
 
-        if(len(result) > 0):
-            return result
+            segments += 1
+            if segments > self.max_segments:
+                break
 
-        print('Could not identify polygon. See processed file.')
-        return np.array([([(0,0), frame.shape[:2]], [(0,0), frame.shape[:2]])])
+
+
+        return result
 
     async def decorate_frame(self, frame, name):
         bg = self.filter_background(frame, name)
@@ -372,43 +383,59 @@ class TrainingProcessor(Processor):
         self.segments = []
         self.polys = []
         self.poly = np.array([[0,0], [0,0]])
+        self.descriptor = descriptor
+
+    def close(self):
+        super().close()
+        self.segmenter.close()
 
     async def process_frame(self, frame, frame_ind):
         self.segments = list(self.segmenter.segments(frame))
         self.rect_len = len(self.segments)
-        if self.rect_index > 0 and self.rect_index < len(self.segments):
+        if self.rect_index >= 0 and self.rect_index < len(self.segments):
             self.rect = stretch_rectangle(self.segments[self.rect_index], frame)
 
         # index 1 is poly
         self.polys = [x[0] for x in self.segmenter.polygon(frame, self.rect)]
         self.poly_len = len(self.polys)
-        if self.poly_index > 0 and self.poly_index < len(self.polys):
+        if self.poly_index >= 0 and self.poly_index < len(self.polys):
             self.poly = self.polys[self.poly_index]
 
         return frame
 
     async def decorate_frame(self, frame, name):
 
-        for r in self.segments:
-            draw_rectangle(frame, r, (60, 60, 60), 1)
-        draw_rectangle(frame, r, (255, 255, 0), 3)
+        if name == 'training':
 
-        frame_view = rect_view(frame, self.rect)
-        for p in self.polys:
-            cv2.polylines(frame_view, [p], True, (60, 60, 60), 1)
-        cv2.polylines(frame_view, [self.poly], True, (0, 0, 255), 3)
+
+            kp, _ = keypoints_view(self.descriptor, frame, self.rect)
+            cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
+
+            for r in self.segments:
+                draw_rectangle(frame, r, (60, 60, 60), 1)
+            draw_rectangle(frame, self.rect, (255, 255, 0), 3)
+
+            frame_view = rect_view(frame, self.rect)
+            for p in self.polys:
+                cv2.polylines(frame_view, [p], True, (60, 60, 60), 1)
+            cv2.polylines(frame_view, [self.poly], True, (0, 0, 255), 3)
+
         return frame
 
     def capture(self, frame, label):
         '''Capture and store the current image'''
-        img = rect_view(frame, rect)
-        self.img_db.store_img(img, label, self.poly,
-                              self.descriptor.detect(img))
+        img = rect_view(frame, self.rect)
+        # process it
+        kp = self.descriptor.detect(frame, None)
+        processed = img.copy()
+        cv2.drawKeypoints(processed, kp, processed, color=(32,32,32), flags=0)
+        cv2.polylines(processed, [self.poly], True, (0,0,255), 3)
+        self.img_db.store_img(img, label, self.poly, kp, processed)
 
 
 class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
-    def __init__(self, camera, background, query_images=[], labels=None, stride=10,
+    def __init__(self, camera, background, img_db, descriptor, stride=10,
                  threshold=0.8, template_size=256, min_match=6,
                  weights=[3, 0.2, -3, -10, 2], max_segments=10,
                  track=True):
@@ -417,7 +444,7 @@ class DetectionProcessor(Processor):
         #set-up our tracker
         # give estimate of our stride
         if track:
-            self.tracker = TrackerProcessor(camera, stride * 2 * len(query_images))
+            self.tracker = TrackerProcessor(camera, stride * 2 * len(img_db))
         #then our segmenter
         self.segmenter = SegmentProcessor(camera, background, stride, max_segments)
         #then us
@@ -431,44 +458,24 @@ class DetectionProcessor(Processor):
         self.weights = weights
         self.stretch_boxes=1.5
         self.track = track
+        self.templates = img_db
 
 
         # Initiate descriptors
-        self.desc = cv2.BRISK_create(thresh=20)
+        self.desc = descriptor
         #set-up our matcher
         self.matcher = cv2.BFMatcher()
 
-        #load template images
-        if labels is None:
-            labels = ['Key {}'.format(i) for i in range(len(query_images))]
-        #read, convert to gray, and resize template images
-        self.templates = []
-        for k,i in zip(labels, query_images):
-            t = {'name': k, 'path': i}
-            img = cv2.imread(i)
-            #h = int(template_size / img.shape[1] * img.shape[0])
-            #img = cv2.resize(img, (template_size, h))
-            # get contours
-            processed, poly, rect = self.segmenter.polygon(img)
-            t['desc'] = keypoints_view(self.desc, img, rect)
-            if t['desc'][1] is None or len(t['desc'][1]) == 0:
-                raise ValueError('Unable to compute descriptors on {}'.format(t['path']))
-            # put info on image
-            cv2.polylines(processed, [poly], True, (0,0,255), 3)
-            cv2.drawKeypoints(processed, t['desc'][0], processed, color=(32,32,32), flags=0)
-            # write it out so we can double check
-            cv2.imwrite(i.split('.jpg')[0] + '_contours.jpg', processed)
-            t['img'] = processed
-            t['poly'] = poly
-            self.templates.append(t)
-
         #create color gradient
-        N = len(labels)
+        N = len(img_db)
         cm = plt.cm.get_cmap('Dark2')
         for i,t in enumerate(self.templates):
             rgba = cm(i / N)
             rgba = [int(x * 255) for x in rgba]
-            t['color'] = rgba[:-1]
+            t.color = rgba[:-1]
+            if t.keypoints is None:
+                t.keypoints = self.desc.detect(t.img)
+            t.keypoints, t.features = self.desc.compute(t.img, t.keypoints)
 
     def close(self):
         super().close()
@@ -488,11 +495,11 @@ class DetectionProcessor(Processor):
 
         # draw key points
         for rect in self.segmenter.segments(frame):
-            kp,_ = self._get_keypoints(frame, rect)
+            kp,_ = keypoints_view(self.desc, frame, rect)
             if(kp is not None):
                 cv2.drawKeypoints(frame, kp, frame, color=(32,32,32), flags=0)
             # draw the rectangle that we use for kp
-            rect = self._stretch_rectangle(rect, frame)
+            rect = stretch_rectangle(rect, frame)
             draw_rectangle(frame, rect, (255, 0, 0), 1)
 
         if name == 'keypoints':
@@ -509,7 +516,9 @@ class DetectionProcessor(Processor):
                 #draw polygon
                 cv2.polylines(frame,[points],True, color, 3, cv2.LINE_AA)
                 #get bottom of polygon
-                cv2.putText(frame, '{} ({:.2})'.format(n, f['score']), (f['rect'][0], f['rect'][1]), cv2.FONT_HERSHEY_SIMPLEX, 1, color)
+                cv2.putText(frame, '{} ({:.2})'.format(n, f['score']),
+                            (f['rect'][0], f['rect'][1]),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, color)
 
         return frame
 
@@ -521,7 +530,7 @@ class DetectionProcessor(Processor):
         found_feature = False
         for rect in self.segmenter.segments(frame):
             kp, des = keypoints_view(self.desc, frame, rect)
-            if(des is not None and len(des) > 2):
+            if(des is not None and len(des) > 3):
                 rect_features = await self._process_frame_view(frame, kp, des, rect)
                 if len(rect_features) > 0:
                     found_feature = True
@@ -541,9 +550,9 @@ class DetectionProcessor(Processor):
         features = {}
         for t in self.templates:
             try:
-                template = t['img']
-                name = t['name']
-                descriptors = t['desc']
+                template = t.img
+                name = t.label
+                descriptors = t.keypoints, t.features
 
                 matches = self.matcher.knnMatch(descriptors[1], des, k=2)
                 # store all the good matches as per Lowe's ratio test.
@@ -564,7 +573,7 @@ class DetectionProcessor(Processor):
                     if M is None:
                         continue
 
-                    src_poly = np.float32(t['poly']).reshape(-1,1,2)
+                    src_poly = np.float32(t.poly).reshape(-1,1,2)
                     dst_poly = cv2.perspectiveTransform(src_poly,M)
                     dst_bbox = cv2.boundingRect(dst_poly)
 
@@ -578,13 +587,13 @@ class DetectionProcessor(Processor):
                             self.weights[4]
                     if score > 0:
                         cm = plt.cm.get_cmap()
-                        features[name] = { 'color': t['color'], 'poly': np.int32(dst_poly),
+                        features[name] = { 'color': t.color, 'poly': np.int32(dst_poly),
                             'kp': np.int32([kp[m.trainIdx].pt for m in good]).reshape(-1,2),
                             'kpcolor': [cm(x.distance / good[-1].distance) for x in good],
                             'score': score, 'rect': bounds}
                         # register it with our tracker
                         if self.track:
-                            self.tracker.track(frame, bounds, np.int32(dst_poly), t['name'])
+                            self.tracker.track(frame, bounds, np.int32(dst_poly), name)
             except cv2.error:
                 #not enough points
                 await asyncio.sleep(0)

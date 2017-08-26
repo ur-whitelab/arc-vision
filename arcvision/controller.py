@@ -50,7 +50,7 @@ class Controller:
         #settings
         self.settings = {'mode': 'background', 'pause': False, 'descriptor': 'BRISK'}
         self.modes = ['background', 'detection', 'training']
-        self.descriptors = ['BRISK', 'AKAZE']
+        self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
         self.processors = []
         self.background = None
 
@@ -93,13 +93,14 @@ class Controller:
         self.processors = []
 
     def _start_detection(self):
-        return
-        self.processors = [DetectionProcessor(self.cam, self.background, paths, labels)]
+        self.processors = [DetectionProcessor(self.cam, self.background,
+                                              self.img_db, self.descriptor)]
 
     def update_settings(self, settings):
         if 'mode' in settings and settings['mode'] != self.settings['mode']:
             mode = settings['mode']
-
+            if mode in self.modes:
+                self.settings['mode'] = mode
             if mode == 'detection':
                 self._reset_processors()
                 self._start_detection()
@@ -109,11 +110,8 @@ class Controller:
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.background, self.img_db, self.descriptor)]
-            else:
-                # invalid
-                mode = self.settings['mode']
 
-            self.settings['mode'] = mode
+
 
         if 'pause' in settings:
             self.settings['pause'] = settings['pause']
@@ -129,11 +127,11 @@ class Controller:
                 self._reset_processors()
                 self.processors = [BackgroundProcessor(self.cam)]
             elif action == 'set_rect' and self.settings['mode'] == 'training':
-                self.processors[0].rect_index = int(self.settings['training_rect_index'])
+                self.processors[0].rect_index = int(settings['training_rect_index'])
             elif action == 'set_poly' and self.settings['mode'] == 'training':
-                self.processors[0].poly_index = int(self.settings['training_poly_index'])
+                self.processors[0].poly_index = int(settings['training_poly_index'])
             elif action == 'label' and self.settings['mode'] == 'training':
-                self.processors[0].capture(self.cam.get_frame(), self.settings['training_label'])
+                self.processors[0].capture(self.cam.get_frame(), settings['training_label'])
                 # update our DB
                 self.templates = [x.label for x in self.img_db]
 
@@ -143,9 +141,15 @@ class Controller:
                 self.descriptor = cv2.BRISK_create()
             elif desc == 'AKAZE':
                 self.descriptor = cv2.AKAZE_create()
+            elif desc == 'KAZE':
+                self.descriptor = cv2.KAZE_create()
             else:
                 desc = self.settings['descriptor']
+
             self.settings['descriptor'] = desc
+            if self.settings['mode'] == 'training':
+                self.processors[0].descriptor = self.descriptor
+            self.img_db.set_descriptor(self.descriptor)
 
         # add our stream names now that everything has been added to the camera
         self.stream_names = self.cam.stream_names
