@@ -133,6 +133,8 @@ class TrackerProcessor(Processor):
 
 
     async def decorate_frame(self, frame, name):
+        if name != 'track':
+            return frame
         for i,t in enumerate(self.tracking):
             if(t['observed'] < 3):
                 continue
@@ -157,7 +159,7 @@ class TrackerProcessor(Processor):
             # check if most of one square's area is included
             intArea = dx * dy
             minArea = min(a[1] * a[3],  b[1] * b[3])
-            if(intArea / minArea > threshold):
+            if(minArea > 0 and intArea / minArea > threshold):
               return True
         return False
 
@@ -202,7 +204,7 @@ class TrackerProcessor(Processor):
 
 class SegmentProcessor(Processor):
     def __init__(self, camera, background, stride, max_segments):
-        super().__init__(camera, ['background-subtract', 'background-thresh', 'background-dilate', 'background-open', 'background', 'distance', 'boxes'], stride)
+        super().__init__(camera, ['background-subtract', 'background-thresh', 'background-erode', 'background-open', 'background', 'distance', 'boxes', 'watershed'], stride)
         self.rect_iter = range(0)
         self.background = background
         self.max_segments = max_segments
@@ -233,24 +235,21 @@ class SegmentProcessor(Processor):
         img = cv2.blur(img, (6,6))
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        if np.mean(bg) > 255 // 2:
+            bg = 255 - bg
         #bg = th2 = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         #                                cv2.THRESH_BINARY_INV,11,2)
         if name == 'background-thresh':
             return bg
         # noise removal
         kernel = np.ones((3,3),np.uint8)
-        bg = cv2.dilate(bg, kernel, iterations = 4)
-        if name == 'background-dilate':
+        bg = cv2.erode(bg, kernel, iterations = 4)
+        if name == 'background-erode':
             return bg
         bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 2)
         if name == 'background-open':
             return bg
 
-        # check if perhaps our colors are inverted. background is assumed to be largest
-        if(np.mean(bg) > 255 / 2):
-            bg[bg == 255] = 5
-            bg[bg == 0] = 255
-            bg[bg == 5] = 0
         return bg
 
     def filter_distance(self, frame):
@@ -366,6 +365,10 @@ class SegmentProcessor(Processor):
         if name == 'boxes':
             for rect in self.filter_contours(dist_transform):
                 draw_rectangle(frame, rect, (255, 255, 0), 1)
+        if name == 'watershed':
+            markers = self.filter_ws_markers(dist_transform)
+            ws_markers = cv2.watershed(frame, markers)
+            frame[ws_markers == -1] = (255, 0, 0)
         return frame
 
 
@@ -437,7 +440,7 @@ class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
     def __init__(self, camera, background, img_db, descriptor, stride=10,
                  threshold=0.8, template_size=256, min_match=6,
-                 weights=[3, 0.2, -3, -10, 2], max_segments=10,
+                 weights=[3, 0.2, -3, -10, 3], max_segments=10,
                  track=True):
 
         #we have a specific order required

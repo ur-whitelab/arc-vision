@@ -118,5 +118,6 @@ def keypoints_view(desc, frame, rect):
     return kp, des
 
 def draw_rectangle(frame, rect, *args):
+    rect = [int(r) for r in rect]
     cv2.rectangle(frame, (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3]), *args)
 
