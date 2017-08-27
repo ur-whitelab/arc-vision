@@ -107,7 +107,7 @@ def stretch_rectangle(rect, frame, stretch=1.2):
 
 def rect_view(frame, rect):
     '''Use a bounding rectangle to create a view of a frame'''
-    if rect[3] <= 3 or rect[2] <= 3:
+    if rect[3] * rect[2] < 20:
         raise ValueError('Attempting to create too small of a view')
     return frame[ rect[1]:(rect[1] + rect[3]), rect[0]:(rect[0] + rect[2]) ]
 

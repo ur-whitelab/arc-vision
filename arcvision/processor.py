@@ -275,18 +275,25 @@ class SegmentProcessor(Processor):
         cv2.circle(markers, (5,5), 3, (255,))
         return markers.astype(np.int32)
 
-    def filter_contours(self, frame):
+    def filter_contours(self, frame, return_contour=False):
         _, contours, _ = cv2.findContours(frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        def sort_key(c):
+            '''The area of bounding rectangle'''
+            rect = cv2.boundingRect(c)
+            return rect[2] * rect[3]
+        contours.sort(key = sort_key, reverse=True)
         rects = [cv2.boundingRect(c) for c in contours]
-        rects.sort(key = lambda r: r[2] * r[3], reverse=True)
         segments = 0
 
-        for r in rects:
+        for c,r in zip(contours, rects):
             #flip around our rectangle
             # exempt small or large rectangles (> 25 % of screen)
             if(r[2] * r[3] < 250 or r[2] * r[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
                 continue
-            yield r
+            if not return_contour:
+                yield r
+            else:
+                yield c
             segments += 1
             if(segments == self.max_segments):
                 break
