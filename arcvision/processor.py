@@ -433,10 +433,13 @@ class TrainingProcessor(Processor):
         img = rect_view(frame, self.rect)
         # process it
         kp = self.descriptor.detect(img, None)
+        if(len(kp) > 4):
+            return False
         processed = img.copy()
         cv2.drawKeypoints(processed, kp, processed, color=(32,32,32), flags=0)
         cv2.polylines(processed, [self.poly], True, (0,0,255), 3)
         self.img_db.store_img(img, label, self.poly, kp, processed)
+        return True
 
 
 class DetectionProcessor(Processor):
@@ -569,7 +572,7 @@ class DetectionProcessor(Processor):
                 matches = self.matcher.knnMatch(descriptors[1], des, k=2)
                 # store all the good matches as per Lowe's ratio test.
                 good = []
-                if(len(matches[0]) > 1): #not sure how this happens
+                if(len(matches) > 1): #not sure how this happens
                     for m,n in matches:
                         if m.distance < self.threshold * n.distance:
                             good.append(m)

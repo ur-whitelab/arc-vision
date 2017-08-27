@@ -48,9 +48,10 @@ class Controller:
         self.vision_state.time = 0
 
         #settings
-        self.settings = {'mode': 'background', 'pause': False, 'descriptor': 'BRISK'}
+        self.settings = {'mode': 'background', 'pause': False, 'descriptor': 'BRISK', 'descriptor_threshold': 30, 'descriptor_threshold_bounds': (1,30), 'descriptor_threshold_step': 1}
         self.modes = ['background', 'detection', 'training']
         self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
+        self.descriptor = cv2.BRISK_create()
         self.processors = []
         self.background = None
 
@@ -98,6 +99,8 @@ class Controller:
                                               self.img_db, self.descriptor)]
 
     def update_settings(self, settings):
+
+        status = True
         if 'mode' in settings and settings['mode'] != self.settings['mode']:
             mode = settings['mode']
             if mode in self.modes:
@@ -132,18 +135,36 @@ class Controller:
             elif action == 'set_poly' and self.settings['mode'] == 'training':
                 self.processors[0].poly_index = int(settings['training_poly_index'])
             elif action == 'label' and self.settings['mode'] == 'training':
-                self.processors[0].capture(self.cam.get_frame(), settings['training_label'])
+                status = self.processors[0].capture(self.cam.get_frame(), settings['training_label'])
                 # update our DB
                 self.templates = [x.label for x in self.img_db]
 
-        if 'descriptor' in settings:
+        if 'descriptor' in settings and (settings['descriptor'] != self.settings['descriptor'] or settings['descriptor_threshold'] != self.settings['descriptor_threshold']):
             desc = settings['descriptor']
             if desc == 'BRISK':
-                self.descriptor = cv2.BRISK_create()
+                if settings['descriptor_threshold'] == 0:
+                    self.settings['descriptor_threshold'] = 30
+                else:
+                    self.settings['descriptor_threshold'] = int(settings['descriptor_threshold'])
+                self.descriptor = cv2.BRISK_create(thresh=self.settings['descriptor_threshold'])
+                self.settings['descriptor_threshold_bounds'] = (1, 50)
+                self.settings['descriptor_threshold_step'] = 1
             elif desc == 'AKAZE':
-                self.descriptor = cv2.AKAZE_create()
+                if settings['descriptor_threshold'] == 0:
+                    self.settings['descriptor_threshold'] = 0.001
+                else:
+                    self.settings['descriptor_threshold'] = float(settings['descriptor_threshold'])
+                self.descriptor = cv2.AKAZE_create(threshold=self.settings['descriptor_threshold'])
+                self.settings['descriptor_threshold_bounds'] = (0.00005, 0.005)
+                self.settings['descriptor_threshold_step'] = 0.00005
             elif desc == 'KAZE':
-                self.descriptor = cv2.KAZE_create()
+                if settings['descriptor_threshold'] == 0:
+                    self.settings['descriptor_threshold'] = 0.001
+                else:
+                    self.settings['descriptor_threshold'] = float(settings['descriptor_threshold'])
+                self.descriptor = cv2.KAZE_create(threshold=self.settings['descriptor_threshold'])
+                self.settings['descriptor_threshold_bounds'] = (0.00005, 0.005)
+                self.settings['descriptor_threshold_step'] = 0.00005
             else:
                 desc = self.settings['descriptor']
 
@@ -157,6 +178,7 @@ class Controller:
         # add our stream names now that everything has been added to the camera
         self.stream_names = self.cam.stream_names
         print(settings)
+        return status
 
     async def update_state(self):
         if await self.cam.update():
