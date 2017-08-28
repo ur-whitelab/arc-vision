@@ -137,3 +137,8 @@ def intersecting(a, b, threshold=0.25):
         if(minArea > 0 and intArea / minArea > threshold):
             return True
     return False
+
+def rect_center(rect):
+    x = rect[0] + rect[2] / 2
+    y = rect[1] + rect[3] / 2
+    return (x,y)

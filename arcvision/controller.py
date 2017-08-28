@@ -13,7 +13,7 @@ from .processor import *
 from .utils import *
 import json
 
-from .protobufs.reactors_pb2 import ReactorSystem
+from .protobufs.graph_pb2 import Graph
 
 
 zmq.asyncio.install()
@@ -44,7 +44,7 @@ class Controller:
         self.stream_names = []
 
         #create state
-        self.vision_state = ReactorSystem()
+        self.vision_state = Graph()
         self.vision_state.time = 0
 
         #settings
@@ -177,14 +177,15 @@ class Controller:
 
         # add our stream names now that everything has been added to the camera
         self.stream_names = self.cam.stream_names
+        self.stream_number = len(self.cam.frame_processors) + 1
         print(settings)
         return status
 
     async def update_state(self):
         if await self.cam.update():
-            self.stream_number = len(self.cam.frame_processors) + 1
-            #TODO: Insert update code here
+
             self.vision_state.time += 1
+            self.sync_objects()
             return self.vision_state
         #cede control so other upates can happen
         await asyncio.sleep(0)
@@ -197,6 +198,29 @@ class Controller:
             await self.pub_sock.send_multipart(['vision-update'.encode(), state.SerializeToString()])
             #exponential moving average of update frequency
             self.frequency = self.frequency * 0.8 +  0.2 / (time.time() - startTime)
+
+    def sync_objects(self):
+        remove = []
+        for key in self.vision_state.nodes:
+            # remove those that were marked last time
+            if self.vision_state.nodes[key].delete:
+                remove.append(key)
+            # mark others as dirty
+            else:
+                self.vision_state.nodes[key].delete = True
+
+        # remove
+        for r in remove:
+            del self.vision_state.nodes[r]
+
+        # now update
+        for o in self.processors[0].objects:
+            node = self.vision_state[o['id']]
+            node.position[:] = o['center']
+            node.label = o['label']
+            node.weight = o['bbox'][2] * o['bbox'][3]
+            node.id = o['id']
+            node.delete = False
 
 
 def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, cc_hostname, template_dir, crop):

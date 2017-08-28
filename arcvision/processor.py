@@ -5,6 +5,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from .utils import *
 
+_object_id = 0
+
+def object_id():
+    global _object_id
+    _object_id += 1
+    return _object_id
+
 class Processor:
     def __init__(self, camera, streams, stride):
 
@@ -73,6 +80,10 @@ class BackgroundProcessor(Processor):
         self.count = 0
         self.paused = False
 
+    @property
+    def objects(self):
+        return []
+
     def get_background(self):
         if self.avg_background is None:
             return None
@@ -103,10 +114,17 @@ class BackgroundProcessor(Processor):
         return frame - self.get_background()
 
 class TrackerProcessor(Processor):
+
+    @property
+    def objects(self):
+        '''Objects should have a dictionary with center, bbbox, name, and id'''
+        return self._tracking
+
+
     def __init__(self, camera, detector_stride, delete_threshold_period=1, stride=1):
         super().__init__(camera, ['track'], stride)
-        self.tracking = []
-        self.names = {}
+        self._tracking = []
+        self.labels = {}
         # need to keep our own ticks because
         # we don't know frame index when track() is called
         self.ticks = 0
@@ -116,7 +134,7 @@ class TrackerProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
         delete = []
-        for i,t in enumerate(self.tracking):
+        for i,t in enumerate(self._tracking):
             status,bbox = t['tracker'].update(frame)
             t['observed'] -= 1
             #update polygon
@@ -124,6 +142,7 @@ class TrackerProcessor(Processor):
                 t['delta'][0] = bbox[0] - t['init'][0]
                 t['delta'][1] = bbox[1] - t['init'][1]
                 t['bbox'] = bbox
+                t['center'] = rect_center(bbox)
 
 
             # check obs counts
@@ -132,16 +151,15 @@ class TrackerProcessor(Processor):
         offset = 0
         delete.sort()
         for i in delete:
-            del self.tracking[i - offset]
+            del self._tracking[i - offset]
             offset += 1
 
         return frame
 
-
     async def decorate_frame(self, frame, name):
         if name != 'track':
             return frame
-        for i,t in enumerate(self.tracking):
+        for i,t in enumerate(self._tracking):
             if(t['observed'] < 3):
                 continue
             bbox = t['bbox']
@@ -152,26 +170,26 @@ class TrackerProcessor(Processor):
 
             #put note about it
             cv2.putText(frame,
-                        '{}: {}'.format(t['id'], t['observed']),
+                        '{}: {}'.format(t['name'], t['observed']),
                         (0, 60 * (i+ 1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
 
         return frame
 
-    def track(self, frame, bbox, poly, name):
+    def track(self, frame, bbox, poly, label):
 
-        if name in self.names:
-            self.names[name] += 1
+        if label in self.labels:
+            self.labels[label] += 1
         else:
-            self.names[name] = 1
+            self.labels[label] = 1
 
         #we need to make sure we don't have an existing object here
-        for t in self.tracking:
+        for t in self._tracking:
             if intersecting(bbox, t['bbox']):
-                if name != t['id'].split('-')[0]:
+                if label != t['label']:
                     #reclassification
-                    self.names[name] -= 1
-                    t['id'] = '{}-{}'.format(name, self.names[name] - 1)
+                    self.labels[label] -= 1
+                    t['name'] = '{}-{}'.format(label, self.labels[label] - 1)
                 # found existing one
                 # add to count
                 t['observed'] = self.ticks_per_obs
@@ -179,12 +197,14 @@ class TrackerProcessor(Processor):
                 t['poly'] = poly
                 t['init'] = bbox
                 t['delta'] = np.int32([0,0])
+                t['center'] = rect_center(bbox)
                 t['tracker'] = cv2.TrackerMedianFlow_create()
                 t['tracker'].init(frame, bbox)
+                t['label'] = label
                 return
 
 
-        id = '{}-{}'.format(name, self.names[name] - 1)
+        name = '{}-{}'.format(label, self.labels[label] - 1)
 
         tracker = cv2.TrackerMedianFlow_create()
         status = tracker.init(frame, bbox)
@@ -193,15 +213,18 @@ class TrackerProcessor(Processor):
             print('Failed to initialize tracker')
             return False
 
-        track_obj = {'id': id,
+        track_obj = {'name': name,
                      'tracker': tracker,
+                     'label': label,
                      'poly': poly,
                      'init': bbox,
+                     'center': rect_center(bbox),
                      'bbox': bbox,
                      'observed': self.ticks_per_obs,
                      'start': self.ticks,
-                     'delta': np.int32([0,0])}
-        self.tracking.append(track_obj)
+                     'delta': np.int32([0,0]),
+                     'id': object_id()}
+        self._tracking.append(track_obj)
         return True
 
 class SegmentProcessor(Processor):
@@ -380,6 +403,12 @@ class SegmentProcessor(Processor):
 
 
 class TrainingProcessor(Processor):
+
+    @property
+    def objects(self):
+        '''Objects should have a dictionary with center, bbbox, name, and id'''
+        return self._objects
+
     ''' This will segment an ROI from the frame and you can label it'''
     def __init__(self, camera, background, img_db, descriptor, max_segments=3):
         super().__init__(camera, ['training'], 1)
@@ -394,6 +423,7 @@ class TrainingProcessor(Processor):
         self.polys = []
         self.poly = np.array([[0,0], [0,0]])
         self.descriptor = descriptor
+        self._objects = []
 
     def close(self):
         super().close()
@@ -446,6 +476,15 @@ class TrainingProcessor(Processor):
         cv2.drawKeypoints(processed, kp, processed, color=(32,32,32), flags=0)
         cv2.polylines(processed, [self.poly], True, (0,0,255), 3)
         self.img_db.store_img(img, label, self.poly, kp, processed)
+
+        #create obj
+        self._objects = [{
+            'bbox': self.rect,
+            'center': rect_center(self.rect),
+            'label': label,
+            'id': object_id()
+        }]
+
         return True
 
 
@@ -461,6 +500,8 @@ class DetectionProcessor(Processor):
         # give estimate of our stride
         if track:
             self.tracker = TrackerProcessor(camera, stride * 2 * len(img_db))
+        else:
+            self.tracker = None
         #then our segmenter
         self.segmenter = SegmentProcessor(camera, background, stride, max_segments)
         #then us
@@ -492,6 +533,13 @@ class DetectionProcessor(Processor):
             if t.keypoints is None:
                 t.keypoints = self.desc.detect(t.img)
             t.keypoints, t.features = self.desc.compute(t.img, t.keypoints)
+
+    @property
+    def objects(self):
+        if self.tracker is None:
+            return []
+
+        return self.tracker.objects
 
     def close(self):
         super().close()
