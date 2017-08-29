@@ -175,22 +175,24 @@ class TrackerProcessor(Processor):
 
         #we need to make sure we don't have an existing object here
         for t in self._tracking:
-            if intersecting(bbox, t['bbox']):
+            intersection = intersecting(bbox, t['bbox'])
+            if intersection is not None and intersection > 0.25:
                 if label != t['label']:
                     #reclassification
                     self.labels[label] -= 1
                     t['name'] = '{}-{}'.format(label, self.labels[label] - 1)
+                    t['label'] = label
                 # found existing one
                 # add to count
                 t['observed'] = self.ticks_per_obs
-                #update polygon and bounding box
-                t['poly'] = poly
-                t['init'] = bbox
-                t['delta'] = np.int32([0,0])
-                t['center_scaled'] = rect_scaled_center(bbox, frame)
-                t['tracker'] = cv2.TrackerMedianFlow_create()
-                t['tracker'].init(frame, bbox)
-                t['label'] = label
+                #update polygon and bounding box and very different
+                if intersection < 0.50:
+                    t['poly'] = poly
+                    t['init'] = bbox
+                    t['delta'] = np.int32([0,0])
+                    t['center_scaled'] = rect_scaled_center(bbox, frame)
+                    t['tracker'] = cv2.TrackerMedianFlow_create()
+                    t['tracker'].init(frame, bbox)
                 return
 
 
