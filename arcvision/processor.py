@@ -121,7 +121,7 @@ class TrackerProcessor(Processor):
         return self._tracking
 
 
-    def __init__(self, camera, detector_stride, delete_threshold_period=1, stride=1):
+    def __init__(self, camera, detector_stride, delete_threshold_period=3, stride=1):
         super().__init__(camera, ['track'], stride)
         self._tracking = []
         self.labels = {}
@@ -470,7 +470,7 @@ class TrainingProcessor(Processor):
         img = rect_view(frame, self.rect)
         # process it
         kp = self.descriptor.detect(img, None)
-        if(len(kp) > 4):
+        if(len(kp) < 4):
             return False
         processed = img.copy()
         cv2.drawKeypoints(processed, kp, processed, color=(32,32,32), flags=0)

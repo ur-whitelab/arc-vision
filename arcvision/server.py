@@ -107,10 +107,8 @@ class SettingsHandler(tornado.web.RequestHandler):
         self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         if len(self.request.body) > 1:
             new_settings = json.loads(self.request.body.decode())
-            if(self.controller.update_settings(new_settings)):
-                self.write('success')
-            else:
-                self.write('fail')
+            response = self.controller.update_settings(new_settings)
+            self.write(response)
 
 
 def start_server(camera, controller, port=8888):

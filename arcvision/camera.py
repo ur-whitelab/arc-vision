@@ -34,6 +34,13 @@ class Camera:
 
         self.cap = cv2.VideoCapture(self.video_file)
 
+        # try turning off autofocus
+        # could be mp4 file, so catch error
+        try:
+            self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+        except cv2.error:
+            pass
+
     def add_frame_processor(self, p):
         '''Add a frame processor object'''
         assert hasattr(p, 'process_frame')

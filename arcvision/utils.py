@@ -2,6 +2,7 @@ import cv2
 import glob
 import pickle
 import os
+import copy
 
 class ImageDB:
     '''Class which stores pre-processed, labeled images used in identification'''
@@ -18,7 +19,7 @@ class ImageDB:
             self.color = (255,255,255)
         def __getstate__(self):
             # remove keypoints from pickle
-            odict = self.__dict__
+            odict = copy.copy(self.__dict__)
             del odict['keypoints']
             del odict['features']
             return odict

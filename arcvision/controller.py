@@ -100,7 +100,7 @@ class Controller:
 
     def update_settings(self, settings):
 
-        status = True
+        status = 'settings_updated'
         if 'mode' in settings and settings['mode'] != self.settings['mode']:
             mode = settings['mode']
             if mode in self.modes:
@@ -135,7 +135,11 @@ class Controller:
             elif action == 'set_poly' and self.settings['mode'] == 'training':
                 self.processors[0].poly_index = int(settings['training_poly_index'])
             elif action == 'label' and self.settings['mode'] == 'training':
-                status = self.processors[0].capture(self.cam.get_frame(), settings['training_label'])
+                if self.processors[0].capture(self.cam.get_frame(), settings['training_label']):
+                    status = 'label_set'
+                else:
+                    status = 'label_fail'
+
                 # update our DB
                 self.templates = [x.label for x in self.img_db]
 
@@ -215,10 +219,9 @@ class Controller:
 
         # now update
         for o in self.processors[0].objects:
-            node = self.vision_state[o['id']]
+            node = self.vision_state.nodes[o['id']]
             node.position[:] = o['center']
             node.label = o['label']
-            node.weight = o['bbox'][2] * o['bbox'][3]
             node.id = o['id']
             node.delete = False
 
