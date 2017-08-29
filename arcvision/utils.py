@@ -3,6 +3,9 @@ import glob
 import pickle
 import os
 import copy
+import hashlib
+import numpy as np
+
 
 class ImageDB:
     '''Class which stores pre-processed, labeled images used in identification'''
@@ -77,7 +80,7 @@ class ImageDB:
             processed_img: the processed image. Will be saved for reference
         '''
         if rel_path is None:
-            rel_path = label
+            rel_path = hashlib.sha256(np.array_repr(img).encode()).hexdigest()
         path = os.path.join(self.template_dir, rel_path)
         if len(path.split('.jpg')) > 1:
             path = path.split('.jpg')[0]
