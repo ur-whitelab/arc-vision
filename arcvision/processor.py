@@ -132,7 +132,7 @@ class TrackerProcessor(Processor):
                 t['delta'][0] = bbox[0] - t['init'][0]
                 t['delta'][1] = bbox[1] - t['init'][1]
                 t['bbox'] = bbox
-                t['center'] = rect_center(bbox)
+                t['center_scaled'] = rect_scaled_center(bbox, frame)
 
 
             # check obs counts
@@ -187,7 +187,7 @@ class TrackerProcessor(Processor):
                 t['poly'] = poly
                 t['init'] = bbox
                 t['delta'] = np.int32([0,0])
-                t['center'] = rect_center(bbox)
+                t['center_scaled'] = rect_scaled_center(bbox, frame)
                 t['tracker'] = cv2.TrackerMedianFlow_create()
                 t['tracker'].init(frame, bbox)
                 t['label'] = label
@@ -208,7 +208,7 @@ class TrackerProcessor(Processor):
                      'label': label,
                      'poly': poly,
                      'init': bbox,
-                     'center': rect_center(bbox),
+                     'center_scaled': rect_scaled_center(bbox, frame),
                      'bbox': bbox,
                      'observed': self.ticks_per_obs,
                      'start': self.ticks,
@@ -488,7 +488,7 @@ class TrainingProcessor(Processor):
         #create obj
         self._objects = [{
             'bbox': self.rect,
-            'center': rect_center(self.rect),
+            'center_scaled': rect_scaled_center(self.rect, frame),
             'label': label,
             'id': object_id()
         }]

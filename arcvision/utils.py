@@ -139,7 +139,7 @@ def intersecting(a, b, threshold=0.25):
             return True
     return False
 
-def rect_center(rect):
-    x = rect[0] + rect[2] / 2
-    y = rect[1] + rect[3] / 2
+def rect_scaled_center(rect, frame):
+    x = (rect[0] + rect[2] / 2) / frame.shape[0]
+    y = (rect[1] + rect[3] / 2) / frame.shape[1]
     return (x,y)

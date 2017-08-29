@@ -157,7 +157,7 @@ class Controller:
             elif action == 'reset_extent' and self.settings['mode'] == 'extent':
                 # unset extent
                 self.crop_processor.rect = None
-                # we lost background, so set to black
+                # we lost background, so switch modes
                 self.background = np.zeros(self.cam.get_frame().shape, np.uint8)
                 self.processors[0].background = self.background
 
@@ -238,7 +238,7 @@ class Controller:
         # now update
         for o in self.processors[0].objects:
             node = self.vision_state.nodes[o['id']]
-            node.position[:] = o['center']
+            node.position[:] = o['center_scaled']
             node.label = o['label']
             node.id = o['id']
             node.delete = False
