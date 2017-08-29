@@ -20,34 +20,28 @@ class Processor:
         camera.add_frame_processor(self)
         self.camera = camera
 
+    @property
+    def objects(self):
+        return []
+
     def close(self):
         self.camera.remove_frame_processor(self)
 
 class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
-    def __init__(self, camera, rect, stride=1):
+    def __init__(self, camera, rect=None, stride=1):
         super().__init__(camera, ['crop'], stride)
-        self.rect = [ (rect[0], rect[1]), (rect[2], rect[3]) ]
-        self.mask = None
-        self.dmask = None
+        self.rect = rect
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
-        if self.mask is None:
-            self.mask = np.zeros(frame.shape, dtype=np.uint8)
-            cv2.rectangle(self.mask, *self.rect, (255,)*3, thickness=cv2.FILLED)
-        #frame = cv2.bitwise_and(frame, self.mask)
-        frame = frame[ self.rect[0][1]:self.rect[1][1], self.rect[0][0]:self.rect[1][0]]
+        if self.rect is not None:
+            return rect_view(frame, self.rect)
         return frame
 
     async def decorate_frame(self, frame, name):
         '''Draw visuals onto the given frame, without carrying-out update'''
-        if self.dmask is None:
-            self.dmask = np.zeros(frame.shape, dtype=np.uint8)
-            cv2.rectangle(self.dmask, *self.rect, (255,255,255), thickness=cv2.FILLED)
-        #frame = cv2.bitwise_and(frame, self.dmask)
-        frame = frame[ self.rect[0][1]:self.rect[1][1], self.rect[0][0]:self.rect[1][0],:  ]
-        return frame
+        return await self.process_frame(frame, 0)
 
 class PreprocessProcessor(Processor):
     '''Substracts and computes background'''
@@ -79,10 +73,6 @@ class BackgroundProcessor(Processor):
         self.avg_background = None
         self.count = 0
         self.paused = False
-
-    @property
-    def objects(self):
-        return []
 
     def get_background(self):
         if self.avg_background is None:
@@ -228,20 +218,35 @@ class TrackerProcessor(Processor):
         return True
 
 class SegmentProcessor(Processor):
-    def __init__(self, camera, background, stride, max_segments):
-        super().__init__(camera, ['background-subtract', 'background-thresh', 'background-erode', 'background-open', 'background', 'distance', 'boxes', 'watershed'], stride)
+    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25):
+        '''Pass stride = -1 to only process on request'''
+        super().__init__(camera, [
+
+                                  'background-subtract',
+                                  'background-thresh',
+                                  'background-erode',
+                                  'background-open',
+                                  'background',
+                                  'distance',
+                                  'boxes',
+                                  'watershed'
+                                  ], max(1, stride))
         self.rect_iter = range(0)
         self.background = background
         self.max_segments = max_segments
+        self.max_rectangle = max_rectangle
+        self.own_process = (stride != -1)
 
     async def process_frame(self, frame, frame_ind):
         '''we only process on request'''
+        if self.own_process:
+            return self._process_frame(frame, frame_ind)
         return frame
 
     def _process_frame(self, frame, frame_ind):
-        bg = self.filter_background(frame)
-        dist_transform = self.filter_distance(bg)
-        self.rect_iter = self.filter_contours(dist_transform)
+        bg = self._filter_background(frame)
+        dist_transform = self._filter_distance(bg)
+        self.rect_iter = self._filter_contours(dist_transform)
         return frame
 
     def segments(self, frame = None):
@@ -249,11 +254,12 @@ class SegmentProcessor(Processor):
             self._process_frame(frame, 0)
         yield from self.rect_iter
 
-    def filter_background(self, frame, name = ''):
+    def _filter_background(self, frame, name = ''):
         #img = cv2.pyrMeanShiftFiltering(frame, 21, 51)
 
         img = frame.copy()
-        img -= self.background
+        if(img.shape == self.background.shape):
+            img -= self.background
 
         if name == 'background-subtract':
             return img
@@ -277,7 +283,7 @@ class SegmentProcessor(Processor):
 
         return bg
 
-    def filter_distance(self, frame):
+    def _filter_distance(self, frame):
         dist_transform = cv2.distanceTransform(frame, cv2.DIST_L2,5)
         dist_transform = cv2.normalize(dist_transform, dist_transform, 0, 255, cv2.NORM_MINMAX)
 
@@ -285,7 +291,7 @@ class SegmentProcessor(Processor):
         dist_transform = np.uint8(dist_transform)
         return dist_transform
 
-    def filter_ws_markers(self, frame):
+    def _filter_ws_markers(self, frame):
         _, contours, _ = cv2.findContours(frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         #create markers
@@ -298,7 +304,7 @@ class SegmentProcessor(Processor):
         cv2.circle(markers, (5,5), 3, (255,))
         return markers.astype(np.int32)
 
-    def filter_contours(self, frame, return_contour=False):
+    def _filter_contours(self, frame, return_contour=False):
         _, contours, _ = cv2.findContours(frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         def sort_key(c):
             '''The area of bounding rectangle'''
@@ -310,8 +316,9 @@ class SegmentProcessor(Processor):
 
         for c,r in zip(contours, rects):
             #flip around our rectangle
-            # exempt small or large rectangles (> 25 % of screen)
-            if(r[2] * r[3] < 250 or r[2] * r[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
+            # exempt small or large rectangles
+            if(r[2] * r[3] < 250 or \
+                r[2] * r[3] / frame.shape[0] / frame.shape[1] > self.max_rectangle ):
                 continue
             if not return_contour:
                 yield r
@@ -322,7 +329,7 @@ class SegmentProcessor(Processor):
                 break
 
 
-    def watershed(self, frame, markers):
+    def _watershed(self, frame, markers):
         ws_markers = cv2.watershed(frame, markers)
         segments = 0
         for i in range(1, np.max(ws_markers)):
@@ -331,7 +338,8 @@ class SegmentProcessor(Processor):
             #flip around our rectangle
             rect = (rect[1], rect[0], rect[3], rect[2])
             # exempt small or large rectangles (> 25 % of screen)
-            if(len(pixels) < 5 or rect[2] * rect[3] < 100 or rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > 0.25 ):
+            if(len(pixels) < 5 or rect[2] * rect[3] < 100 or \
+                rect[2] * rect[3] / frame.shape[0] / frame.shape[1] > self.max_rectangle ):
                 continue
             yield rect
             segments += 1
@@ -342,14 +350,14 @@ class SegmentProcessor(Processor):
         '''
             rect: an optional view which will limit the frame
         '''
-        bg = self.filter_background(frame)
-        dist_transform = self.filter_distance(bg)
+        bg = self._filter_background(frame)
+        dist_transform = self._filter_distance(bg)
         # filter herre
         if rect is not None:
             dist_transform = rect_view(dist_transform, rect)
             frame = rect_view(frame, rect)
 
-        markers = self.filter_ws_markers(dist_transform)
+        markers = self._filter_ws_markers(dist_transform)
         ws_markers = cv2.watershed(frame, markers)
 
         #sort based on size
@@ -384,19 +392,19 @@ class SegmentProcessor(Processor):
         return result
 
     async def decorate_frame(self, frame, name):
-        bg = self.filter_background(frame, name)
+        bg = self._filter_background(frame, name)
         if name.find('background') != -1:
             return bg
 
-        dist_transform = self.filter_distance(bg)
+        dist_transform = self._filter_distance(bg)
         if name == 'distance':
             return dist_transform
 
         if name == 'boxes':
-            for rect in self.filter_contours(dist_transform):
+            for rect in self._filter_contours(dist_transform):
                 draw_rectangle(frame, rect, (255, 255, 0), 1)
         if name == 'watershed':
-            markers = self.filter_ws_markers(dist_transform)
+            markers = self._filter_ws_markers(dist_transform)
             ws_markers = cv2.watershed(frame, markers)
             frame[ws_markers == -1] = (255, 0, 0)
         return frame
@@ -412,7 +420,7 @@ class TrainingProcessor(Processor):
     ''' This will segment an ROI from the frame and you can label it'''
     def __init__(self, camera, background, img_db, descriptor, max_segments=3):
         super().__init__(camera, ['training'], 1)
-        self.segmenter = SegmentProcessor(camera, background, 8, max_segments)
+        self.segmenter = SegmentProcessor(camera, background, -1, max_segments)
         self.img_db = img_db
         self.rect_index = 0
         self.poly_index = 0
@@ -503,7 +511,7 @@ class DetectionProcessor(Processor):
         else:
             self.tracker = None
         #then our segmenter
-        self.segmenter = SegmentProcessor(camera, background, stride, max_segments)
+        self.segmenter = SegmentProcessor(camera, background, -1, max_segments)
         #then us
         super().__init__(camera, ['keypoints', 'identify'], stride)
 

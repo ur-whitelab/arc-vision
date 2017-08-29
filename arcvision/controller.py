@@ -49,7 +49,7 @@ class Controller:
 
         #settings
         self.settings = {'mode': 'background', 'pause': False, 'descriptor': 'BRISK', 'descriptor_threshold': 30, 'descriptor_threshold_bounds': (1,30), 'descriptor_threshold_step': 1}
-        self.modes = ['background', 'detection', 'training']
+        self.modes = ['background', 'detection', 'training', 'extent']
         self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
         self.descriptor = cv2.BRISK_create()
         self.processors = []
@@ -72,9 +72,7 @@ class Controller:
         start_server(self.cam, self, server_port)
         print('Started arcvision server')
 
-        # setup initial streams
-        if crop is not None:
-            CropProcessor(self.cam, crop)
+        self.crop_processor = CropProcessor(self.cam, crop)
         #PreprocessProcessor(self.cam)
         self.processors = [BackgroundProcessor(self.cam)]
 
@@ -98,7 +96,7 @@ class Controller:
         self.processors = [DetectionProcessor(self.cam, self.background,
                                               self.img_db, self.descriptor)]
 
-    def update_settings(self, settings):
+    async def update_settings(self, settings):
 
         status = 'settings_updated'
         if 'mode' in settings and settings['mode'] != self.settings['mode']:
@@ -114,8 +112,11 @@ class Controller:
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.background, self.img_db, self.descriptor)]
-
-
+            elif mode == 'extent':
+                self._reset_processors()
+                self.processors = [SegmentProcessor(self.cam, self.background, 16, 1, 1)]
+            # notify that our mode changed
+            await self.pub_sock.send_multipart(['vision-mode'.encode(), mode.encode()])
 
         if 'pause' in settings:
             self.settings['pause'] = settings['pause']
@@ -142,6 +143,23 @@ class Controller:
 
                 # update our DB
                 self.templates = [x.label for x in self.img_db]
+            elif action == 'set_extent' and self.settings['mode'] == 'extent':
+                extent_view = None
+                try:
+                    extent_view = next(self.processors[0].segments())
+                except StopIteration:
+                    pass
+                # set the extent
+                self.crop_processor.rect = extent_view
+                # need to fix the background dimensions
+                self.background = rect_view(self.background, extent_view)
+                self.processors[0].background = self.background
+            elif action == 'reset_extent' and self.settings['mode'] == 'extent':
+                # unset extent
+                self.crop_processor.rect = None
+                # we lost background, so set to black
+                self.background = np.zeros(self.cam.get_frame().shape, np.uint8)
+                self.processors[0].background = self.background
 
         if 'descriptor' in settings and (settings['descriptor'] != self.settings['descriptor'] or settings['descriptor_threshold'] != self.settings['descriptor_threshold']):
             desc = settings['descriptor']

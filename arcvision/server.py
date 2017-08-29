@@ -101,13 +101,13 @@ class SettingsHandler(tornado.web.RequestHandler):
     def initialize(self, controller):
         self.controller = controller
 
-    def post(self):
+    async def post(self):
         self.set_header("Access-Control-Allow-Origin", "*")
         self.set_header("Access-Control-Allow-Headers", "x-requested-with")
         self.set_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         if len(self.request.body) > 1:
             new_settings = json.loads(self.request.body.decode())
-            response = self.controller.update_settings(new_settings)
+            response = await self.controller.update_settings(new_settings)
             self.write(response)
 
 
