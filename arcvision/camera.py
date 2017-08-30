@@ -10,7 +10,7 @@ import numpy as np
 
 class Camera:
     '''Class for managing processing video frames'''
-    def __init__(self, video_file=-1, frame_buffer=10):
+    def __init__(self, strobe_socket, video_file=-1, frame_buffer=10):
 
         if video_file == '':
             video_file = 0
@@ -31,6 +31,7 @@ class Camera:
         self.frame_ind = 1
         self.stream_names = {'Base': ['raw']}
         self.paused = False
+        self.strobe_socket = strobe_socket
 
         self.cap = cv2.VideoCapture(self.video_file)
 
@@ -119,15 +120,7 @@ class Camera:
         if self.cap.isOpened():
             await self.sem.acquire()
             # check this, for if we have a looping video
-            if self.frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
-                print('Completed video, looping again')
-                self.frame_ind = 1
-                self.cap = cv2.VideoCapture(self.video_file)
-            if not self.paused:
-                ret, frame = self.cap.read()
-                self.frame_ind += 1
-            else:
-                ret, frame = True, self.frame
+            ret, frame = await self._cap_frame()
             if ret and frame is not None:
                 # normal update
                 self.frame = frame
@@ -136,6 +129,22 @@ class Camera:
                 await asyncio.gather(task)
                 return True
         return False
+
+    async def _cap_frame(self):
+        if self.frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
+            print('Completed video, looping again')
+            self.frame_ind = 1
+            self.cap = cv2.VideoCapture(self.video_file)
+        if not self.paused:
+            # strobe
+            await self.strobe_socket.send('start'.encode())
+            await self.strobe_socket.recv()
+            ret, frame = self.cap.read()
+            await self.strobe_socket.send('done'.encode())
+            self.frame_ind += 1
+        else:
+            ret, frame = True, self.frame
+        return ret, frame
 
     def get_frame(self):
         return self.frame

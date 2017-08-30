@@ -20,18 +20,14 @@ zmq.asyncio.install()
 
 class Controller:
     '''Controls flow of reactor program'''
-    def __init__(self, zmq_sub_port, zmq_pub_port, cc_hostname):
+    def __init__(self, zmq_sub_port, zmq_pub_port, zmq_projector_port, cc_hostname):
         self.ctx = zmq.asyncio.Context()
 
         #subscribe to publishing socket
-        zmq_uri = 'tcp://{}:{}'.format(cc_hostname, zmq_sub_port)
-        print('Connecting SUB Socket to {}'.format(zmq_uri))
-        self.projector_sock = self.ctx.socket(zmq.SUB)
+        zmq_uri = 'tcp://{}:{}'.format(cc_hostname, zmq_projector_port)
+        print('Connecting REP Socket to {}'.format(zmq_uri))
+        self.projector_sock = self.ctx.socket(zmq.REP)
         self.projector_sock.connect(zmq_uri)
-        #we only want vision updates
-        sub_topic = 'projector-update'
-        print('listening for topic: {}'.format(sub_topic))
-        self.projector_sock.subscribe(sub_topic.encode())
 
         #register publishing socket
         zmq_uri = 'tcp://{}:{}'.format(cc_hostname, zmq_pub_port)
@@ -67,7 +63,7 @@ class Controller:
     async def handle_start(self, video_filename, server_port, template_dir, crop):
         '''Begin processing webcam and updating state'''
 
-        self.cam = Camera(video_filename)
+        self.cam = Camera(self.projector_sock, video_filename)
         self.img_db = ImageDB(template_dir)
         start_server(self.cam, self, server_port)
         print('Started arcvision server')
@@ -244,8 +240,8 @@ class Controller:
             node.delete = False
 
 
-def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, cc_hostname, template_dir, crop):
-    c = Controller(zmq_sub_port, zmq_pub_port, cc_hostname)
+def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, zmq_projector_port, cc_hostname, template_dir, crop):
+    c = Controller(zmq_sub_port, zmq_pub_port, zmq_projector_port, cc_hostname)
     asyncio.ensure_future(c.handle_start(video_filename, server_port, template_dir, crop))
     loop = asyncio.get_event_loop()
     loop.run_forever()
@@ -256,6 +252,7 @@ def main():
     parser.add_argument('--video-filename', help='location of video or empty for webcam', default='', dest='video_filename')
     parser.add_argument('--server-port', help='port to run server', default='8888', dest='server_port')
     parser.add_argument('--zmq-sub-port', help='port for receiving zmq sub update', default=5000, dest='zmq_sub_port')
+    parser.add_argument('--zmq-projector-port', help='port for connecting to projector', default=5001, dest='zmq_projector_port')
     parser.add_argument('--cc-hostname', help='hostname for cc to receive zmq pub updates', default='localhost', dest='cc_hostname')
     parser.add_argument('--zmq-pub-port', help='port for publishing my zmq updates', default=2400, dest='zmq_pub_port')
     parser.add_argument('--template-include', help='directory containing template images', dest='template_dir', required=True)
@@ -270,6 +267,7 @@ def main():
          args.server_port,
          args.zmq_sub_port,
          args.zmq_pub_port,
+         args.zmq_projector_port,
          args.cc_hostname,
          args.template_dir,
          crop)
