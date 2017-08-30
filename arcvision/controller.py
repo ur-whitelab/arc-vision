@@ -25,8 +25,8 @@ class Controller:
 
         #subscribe to publishing socket
         zmq_uri = 'tcp://{}:{}'.format(cc_hostname, zmq_projector_port)
-        print('Connecting REP Socket to {}'.format(zmq_uri))
-        self.projector_sock = self.ctx.socket(zmq.REP)
+        print('Connecting REQ Socket to {}'.format(zmq_uri))
+        self.projector_sock = self.ctx.socket(zmq.REQ)
         self.projector_sock.connect(zmq_uri)
 
         #register publishing socket
@@ -72,7 +72,7 @@ class Controller:
         #PreprocessProcessor(self.cam)
         self.processors = [BackgroundProcessor(self.cam)]
 
-        self.update_settings(self.settings)
+        await self.update_settings(self.settings)
 
         while True:
             sys.stdout.flush()

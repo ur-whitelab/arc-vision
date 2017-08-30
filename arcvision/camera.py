@@ -137,10 +137,13 @@ class Camera:
             self.cap = cv2.VideoCapture(self.video_file)
         if not self.paused:
             # strobe
+            print('requesting strobe')
             await self.strobe_socket.send('start'.encode())
             await self.strobe_socket.recv()
+            print('acked')
             ret, frame = self.cap.read()
             await self.strobe_socket.send('done'.encode())
+            print('strobe finished')
             self.frame_ind += 1
         else:
             ret, frame = True, self.frame
