@@ -31,6 +31,7 @@ class Camera:
         self.frame_ind = 1
         self.stream_names = {'Base': ['raw']}
         self.paused = False
+        self.strobe = False
         self.strobe_socket = strobe_socket
 
         self.cap = cv2.VideoCapture(self.video_file)
@@ -137,13 +138,15 @@ class Camera:
             self.cap = cv2.VideoCapture(self.video_file)
         if not self.paused:
             # strobe
-            print('requesting strobe')
-            await self.strobe_socket.send('start'.encode())
-            await self.strobe_socket.recv()
-            print('acked')
+            if(self.strobe):
+                print('requesting strobe')
+                await self.strobe_socket.send('start'.encode())
+                await self.strobe_socket.recv()
+                print('acked')
             ret, frame = self.cap.read()
-            await self.strobe_socket.send('done'.encode())
-            print('strobe finished')
+            if(self.strobe):
+                await self.strobe_socket.send('done'.encode())
+                print('strobe finished')
             self.frame_ind += 1
         else:
             ret, frame = True, self.frame
