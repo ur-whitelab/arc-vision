@@ -5,6 +5,7 @@ import asyncio
 import cv2
 import copy
 import numpy as np
+import sys
 
 #The async is so that the program can yield control to other asynchronous tasks
 
@@ -139,14 +140,18 @@ class Camera:
         if not self.paused:
             # strobe
             if(self.strobe):
-                print('requesting strobe')
-                await self.strobe_socket.send('start'.encode())
-                await self.strobe_socket.recv()
-                print('acked')
+                #print('requesting strobe')
+                #sys.stdout.flush()
+                self.strobe_socket.send('start'.encode())
+                self.strobe_socket.recv()
+                #print('acked')
+                #sys.stdout.flush()
             ret, frame = self.cap.read()
             if(self.strobe):
-                await self.strobe_socket.send('done'.encode())
-                print('strobe finished')
+                self.strobe_socket.send('done'.encode())
+                self.strobe_socket.recv()
+                #print('strobe finished')
+                #sys.stdout.flush()
             self.frame_ind += 1
         else:
             ret, frame = True, self.frame

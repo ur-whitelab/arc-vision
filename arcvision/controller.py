@@ -25,8 +25,8 @@ class Controller:
 
         #subscribe to publishing socket
         zmq_uri = 'tcp://{}:{}'.format(cc_hostname, zmq_projector_port)
-        print('Connecting REQ Socket to {}'.format(zmq_uri))
-        self.projector_sock = self.ctx.socket(zmq.REQ)
+        print('Connecting pair Socket to {}'.format(zmq_uri))
+        self.projector_sock = self.ctx.socket(zmq.PAIR)
         self.projector_sock.connect(zmq_uri)
 
         #register publishing socket
