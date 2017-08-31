@@ -96,13 +96,14 @@ class Controller:
 
         status = 'settings_updated'
         if 'mode' in settings and settings['mode'] != self.settings['mode']:
+            self.cam.stop_strobe()
             mode = settings['mode']
             if mode in self.modes:
                 self.settings['mode'] = mode
             if mode == 'detection':
                 self._reset_processors()
                 self._start_detection()
-                self.cam.strobe = True
+                await self.cam.start_strobe()
             elif mode == 'background':
                 self._reset_processors()
                 self.processors = [BackgroundProcessor(self.cam)]

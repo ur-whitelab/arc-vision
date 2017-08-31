@@ -6,6 +6,7 @@ import cv2
 import copy
 import numpy as np
 import sys
+import time
 
 #The async is so that the program can yield control to other asynchronous tasks
 
@@ -40,6 +41,7 @@ class Camera:
         # try turning off autofocus
         # could be mp4 file, so catch error
         try:
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
         except cv2.error:
             pass
@@ -59,6 +61,13 @@ class Camera:
         # I'm a simple man
         self.decorate_index = min(len(self.frame_processors), self.decorate_index)
 
+    async def start_strobe(self):
+        await self._calibrate_cap_time()
+        print('Starting strobe. Will flush with {} as marker time'.format(self.frame_cap_time))
+        self.strobe = True
+
+    def stop_strobe(self):
+        self.strobe = False
 
 
     async def _process_frame(self):
@@ -132,6 +141,27 @@ class Camera:
                 return True
         return False
 
+    def _flush_buffers(self, N=5):
+
+        for i in range(N):
+            startTime = time.perf_counter()
+            self.cap.grab()
+            self.cap.retrieve()
+            diff = time.perf_counter() - startTime
+            if(diff > 5 * self.frame_cap_time):
+                print('broken after', diff)
+                return
+        print('broken on iteration')
+    async def _calibrate_cap_time(self, N = 3):
+        self.frame_cap_time = 0
+        for i in range(N):
+            await asyncio.sleep(0)
+            startTime = time.perf_counter()
+            self.cap.grab()
+            self.cap.retrieve()
+            self.frame_cap_time += time.perf_counter() - startTime
+        self.frame_cap_time /= N
+
     async def _cap_frame(self):
         if self.frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
             print('Completed video, looping again')
@@ -140,6 +170,7 @@ class Camera:
         if not self.paused:
             # strobe
             if(self.strobe):
+<<<<<<< HEAD
                 pass
                 #print('requesting strobe')
                 #sys.stdout.flush()
@@ -155,6 +186,32 @@ class Camera:
                 #print('strobe finished')
                 #sys.stdout.flush()
             ret, frame = self.cap.retrieve()
+=======
+                print('requesting strobe')
+                sys.stdout.flush()
+                startTime = time.perf_counter()
+                self._flush_buffers(2)
+                print('flushed after {}'.format(time.perf_counter() - startTime))
+                startTime = time.perf_counter()
+                self.strobe_socket.send('start'.encode())
+                self.strobe_socket.recv()
+                self._flush_buffers(2)
+                self.cap.grab()
+                print('grabbed after {}'.format(time.perf_counter() - startTime))
+                startTime = time.perf_counter()
+                #sys.stdout.flush()
+                self.cap.grab() # empty buffer
+            else:
+                ret, frame = self.cap.read()
+            if(self.strobe):
+                self.strobe_socket.send('done'.encode())
+                print('Sent done after {}'.format(time.perf_counter() - startTime))
+                self.strobe_socket.recv()
+                ret, frame = self.cap.retrieve()
+                print('strobe finished {}'.format(time.perf_counter() - startTime))
+                #sys.stdout.flush()
+                await asyncio.sleep(2)
+>>>>>>> 3b2886c0f6f8f3d24e54bd1312f6815e417ecb80
             self.frame_ind += 1
         else:
             ret, frame = True, self.frame
