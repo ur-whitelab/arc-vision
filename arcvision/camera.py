@@ -140,18 +140,21 @@ class Camera:
         if not self.paused:
             # strobe
             if(self.strobe):
+                pass
                 #print('requesting strobe')
                 #sys.stdout.flush()
-                self.strobe_socket.send('start'.encode())
-                self.strobe_socket.recv()
+                #self.strobe_socket.send('start'.encode())
+                #self.strobe_socket.recv()
                 #print('acked')
                 #sys.stdout.flush()
-            ret, frame = self.cap.read()
+            ret = self.cap.grab()
             if(self.strobe):
-                self.strobe_socket.send('done'.encode())
-                self.strobe_socket.recv()
+                pass
+                #self.strobe_socket.send('done'.encode())
+                #self.strobe_socket.recv()
                 #print('strobe finished')
                 #sys.stdout.flush()
+            ret, frame = self.cap.retrieve()
             self.frame_ind += 1
         else:
             ret, frame = True, self.frame
