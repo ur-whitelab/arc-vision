@@ -170,23 +170,6 @@ class Camera:
         if not self.paused:
             # strobe
             if(self.strobe):
-<<<<<<< HEAD
-                pass
-                #print('requesting strobe')
-                #sys.stdout.flush()
-                #self.strobe_socket.send('start'.encode())
-                #self.strobe_socket.recv()
-                #print('acked')
-                #sys.stdout.flush()
-            ret = self.cap.grab()
-            if(self.strobe):
-                pass
-                #self.strobe_socket.send('done'.encode())
-                #self.strobe_socket.recv()
-                #print('strobe finished')
-                #sys.stdout.flush()
-            ret, frame = self.cap.retrieve()
-=======
                 print('requesting strobe')
                 sys.stdout.flush()
                 startTime = time.perf_counter()
@@ -211,7 +194,6 @@ class Camera:
                 print('strobe finished {}'.format(time.perf_counter() - startTime))
                 #sys.stdout.flush()
                 await asyncio.sleep(2)
->>>>>>> 3b2886c0f6f8f3d24e54bd1312f6815e417ecb80
             self.frame_ind += 1
         else:
             ret, frame = True, self.frame
