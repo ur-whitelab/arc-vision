@@ -49,7 +49,7 @@ class ProjectorProcessor(Processor):
 class CalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
        to the projector coordinate system. '''
-    def __init__(self, camera, background, stride=1, N=25, delay=5, stay=10):
+    def __init__(self, camera, background, stride=1, N=25, delay=3, stay=6):
         self.segmenter = SegmentProcessor(camera, background, -1, 1, max_rectangle=0.05)
         super().__init__(camera, ['calibration', 'transform'], stride)
 
@@ -71,6 +71,7 @@ class CalibrationProcessor(Processor):
         self.first = True
 
         self.transform = np.identity(3)
+        self.scaled_transform = np.identity(3)
         self.fit = np.inf
 
     def close(self):
@@ -105,18 +106,24 @@ class CalibrationProcessor(Processor):
     def _update_homography(self, frame):
         t, _ = cv2.findHomography((self.points / self.counts).reshape(-1, 1, 2),
                                 self.calibration_points.reshape(-1, 1, 2),
-                                cv2.RANSAC, 5.0)
+                                cv2.RANSAC, 3.0)
+        ts, _ = cv2.findHomography(self._unscale(self.calibration_points, frame.shape).reshape(-1, 1, 2),
+                    self._unscale(self.points / self.counts, frame.shape).reshape(-1, 1, 2),
+                    cv2.RANSAC, 3.0)
         if t is None:
             print('homography failed')
         else:
             if(self.first):
                 self.transform = t
+                self.scaled_transform = ts
                 self.first = True
             else:
-                self.transform = self.transform * 0.3 + t * 0.7
+                self.transform = self.transform * 0.7 + t * 0.3
+                self.scaled_transform = self.scaled_transform * 0.7 + ts * 0.3
         # get fit relative to identity
         self.fit = linalg.norm(self.calibration_points.reshape(-1, 1, 2) - cv2.perspectiveTransform((self.points / self.counts).reshape(-1, 1, 2), self.transform)) /\
                     linalg.norm(self.calibration_points.reshape(-1, 1, 2) - cv2.perspectiveTransform((self.points / self.counts).reshape(-1, 1, 2), np.identity(3)))
+
 
     def _unscale(self, array, shape):
         return (array * [shape[1], shape[0]]).astype(np.int32)
@@ -134,6 +141,10 @@ class CalibrationProcessor(Processor):
             cv2.circle(frame,
                         tuple(self._unscale(self.calibration_points[i, :],
                             frame.shape)), 10, (0,255, 255), -1)
+            p = np.array( [[0, 0], [0, 1], [1, 1], [1, 0]], np.float).reshape(-1, 1, 2)
+            c = cv2.perspectiveTransform(p, linalg.inv(self.transform))
+            c = self._unscale(c, frame.shape)
+            cv2.polylines(frame, [c], True, (0, 255, 125), 4)
         cv2.putText(frame,
                 'Homography Fit: {}'.format(self.fit),
                 (100, 250),
@@ -141,7 +152,7 @@ class CalibrationProcessor(Processor):
         if name == 'transform':
             for i in range(frame.shape[2]):
                 frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
-                                                    self.transform,
+                                                     self.scaled_transform,
                                                      frame.shape[1::-1])
         return frame
 

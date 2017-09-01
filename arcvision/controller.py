@@ -121,7 +121,7 @@ class Controller:
                 self._reset_processors()
                 # reset my transform, so it doesn't intefere
                 self.transform = np.identity(3)
-                self.processors = [ProjectorProcessor(self.cam, self.projector_sock), CalibrationProcessor(self.cam, self.background)]
+                self.processors = [CalibrationProcessor(self.cam, self.background)]
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.background, self.img_db, self.descriptor)]
