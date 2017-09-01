@@ -107,12 +107,11 @@ class StrobeProcessor(Processor):
 class CalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
        to the projector coordinate system. '''
-    def __init__(self, camera, background, stride=1, N=8, delay=2, stay=3):
-        self.segmenter = SegmentProcessor(camera, background, -1, 1, max_rectangle=0.1)
+    def __init__(self, camera, background, stride=1, N=25, delay=5, stay=10):
+        self.segmenter = SegmentProcessor(camera, background, -1, 1, max_rectangle=0.05)
         super().__init__(camera, ['calibration', 'transform'], stride)
 
         self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
-        print(self.calibration_points)
         self._objects = []
         for i,c in enumerate(self.calibration_points):
             o = {}
@@ -130,6 +129,7 @@ class CalibrationProcessor(Processor):
         self.first = True
 
         self.transform = np.identity(3)
+        self.fit = np.inf
 
     def close(self):
         super().close()
@@ -140,7 +140,7 @@ class CalibrationProcessor(Processor):
             if frame_ind % (self.stay + self.delay) > self.delay:
                 seg = next(self.segmenter.segments(frame))
                 p = rect_scaled_center(seg, frame)
-                self.points[self.index] += p
+                self.points[self.index, :] += p
                 self.counts[self.index] += 1
         except StopIteration:
             pass
@@ -153,6 +153,7 @@ class CalibrationProcessor(Processor):
                 print(self.transform)
                 self.points[:] = 0
                 self.counts[:] = 0
+                #self.calibration_points = np.random.random( (self.N, 2)) * 0.9 + 0.1
             self.index += 1
             self.index %= self.N
 
@@ -160,9 +161,9 @@ class CalibrationProcessor(Processor):
 
 
     def _update_homography(self, frame):
-        t, _ = cv2.findHomography(self.points / self.counts,
-                                self.calibration_points,
-                                 cv2.LMEDS)
+        t, _ = cv2.findHomography((self.points / self.counts).reshape(-1, 1, 2),
+                                self.calibration_points.reshape(-1, 1, 2),
+                                cv2.RANSAC, 5.0)
         if t is None:
             print('homography failed')
         else:
@@ -170,20 +171,31 @@ class CalibrationProcessor(Processor):
                 self.transform = t
                 self.first = True
             else:
-                self.transform = self.transform * 0.7 + t * 0.3
+                self.transform = self.transform * 0.3 + t * 0.7
+        # get fit relative to identity
+        self.fit = linalg.norm(self.calibration_points.reshape(-1, 1, 2) - cv2.perspectiveTransform((self.points / self.counts).reshape(-1, 1, 2), self.transform)) /\
+                    linalg.norm(self.calibration_points.reshape(-1, 1, 2) - cv2.perspectiveTransform((self.points / self.counts).reshape(-1, 1, 2), np.identity(3)))
 
     def _unscale(self, array, shape):
-        return (array * shape[:2]).astype(np.int32)
+        return (array * [shape[1], shape[0]]).astype(np.int32)
     async def decorate_frame(self, frame, name):
         if name == 'calibration' or name == 'transform':
-            p = self.calibration_points[self.index, :]
+            i = self.index
+            p = self.calibration_points[i, :]
             c = cv2.perspectiveTransform(p.reshape(-1, 1, 2), linalg.inv(self.transform)).reshape(2)
-            c *= frame.shape[:2]
+            c = self._unscale(c, frame.shape)
+            cv2.circle(frame,
+                        tuple(self._unscale(self.points[i] / self.counts[i],
+                            frame.shape)), 10, (0,0,255), -1)
             cv2.circle(frame,
                         tuple(c.astype(np.int)), 10, (255,0,0), -1)
             cv2.circle(frame,
-                        tuple(self._unscale(self.points[self.index] / self.counts[self.index],
-                            frame.shape)), 10, (0,0,255), -1)
+                        tuple(self._unscale(self.calibration_points[i, :],
+                            frame.shape)), 10, (0,255, 255), -1)
+        cv2.putText(frame,
+                'Homography Fit: {}'.format(self.fit),
+                (100, 250),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,124,255))
         if name == 'transform':
             for i in range(frame.shape[2]):
                 frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
@@ -280,7 +292,7 @@ class TrackerProcessor(Processor):
         return self._tracking
 
 
-    def __init__(self, camera, detector_stride, delete_threshold_period=3, stride=1):
+    def __init__(self, camera, detector_stride, delete_threshold_period=2.5, stride=1):
         super().__init__(camera, ['track'], stride)
         self._tracking = []
         self.labels = {}
@@ -438,7 +450,7 @@ class SegmentProcessor(Processor):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         if np.mean(bg) > 255 // 2:
-            bg = 255 - bg
+           bg = 255 - bg
         #bg = th2 = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         #                                cv2.THRESH_BINARY_INV,11,2)
         if name == 'background-thresh':

@@ -43,6 +43,10 @@ class Camera:
         # could be mp4 file, so catch error
         try:
             #self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720)
+            #self.cap.set(cv2.CAP_PROP_FPS, 60)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
         except cv2.error:
             pass
