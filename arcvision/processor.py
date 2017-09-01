@@ -340,10 +340,10 @@ class SegmentProcessor(Processor):
             return bg
         # noise removal
         kernel = np.ones((3,3),np.uint8)
-        bg = cv2.erode(bg, kernel, iterations = 4)
+        bg = cv2.erode(bg, kernel, iterations = 3)
         if name == 'background-erode':
             return bg
-        bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 2)
+        bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 3)
         if name == 'background-open':
             return bg
 
@@ -564,7 +564,7 @@ class TrainingProcessor(Processor):
 
 class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
-    def __init__(self, camera, background, img_db, descriptor, stride=10,
+    def __init__(self, camera, background, img_db, descriptor, stride=5,
                  threshold=0.8, template_size=256, min_match=6,
                  weights=[3, -1, -1, -10, 5], max_segments=10,
                  track=True):

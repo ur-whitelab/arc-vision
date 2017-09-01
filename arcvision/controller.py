@@ -103,7 +103,7 @@ class Controller:
             if mode == 'detection':
                 self._reset_processors()
                 self._start_detection()
-                await self.cam.start_strobe()
+                #await self.cam.start_strobe()
             elif mode == 'background':
                 self._reset_processors()
                 self.processors = [BackgroundProcessor(self.cam)]
