@@ -27,6 +27,70 @@ class Processor:
     def close(self):
         self.camera.remove_frame_processor(self)
 
+class CalibrationProcessor:
+    def __init__(self, camera, background, stride=1, N=100, delay=10):
+        super().__init__(camera, ['calibration', 'transform'], stride)
+
+        self.calibration_points = np.random.random( (N, 2))
+        self.objects = []
+        for i,c in enumerate(calibration_points):
+            o = dict()
+            o['id'] = 'calibration-{}'.format(i)
+            o['center_scaled'] = c
+            o['label'] = 'calibration-point'
+
+        self.index = 0
+        self.delay = delay
+        self.segmenter = SegmentProcessor(camera, background, 1, 1)
+        self.points = np.zeroes( (N, 2) )
+        self.counts = np.zeroes( (N, 1) )
+
+        self.do_calibrate = True
+        self.N = N
+
+        self.transform = np.ones( (3, 3) )
+        self.transform[:, 2] = 0
+
+    async def process_frame(self, frame, frame_ind):
+        if self.do_calibrate:
+            seg = next(self.segmenter.segments(frame))
+            if seg:
+                p = rect_scaled_center(seg, frame)
+                self.points[self.index] += p
+                self.counts[self.index] += 1
+                if(frame_ind % delay == 0):
+                    self.index += 1
+                    self.index %= self.N
+
+            # update homography estimate
+            if(self.index == self.N - 1):
+                self._update_homography()
+                self.points[:] = 0
+                self.counts[:] = 0
+
+            return frame
+        else:
+            return cv2.warpPerspective(frame, self.transform, frame.shape)
+
+    def _update_homography(self):
+        self.transform, _ = cv2.findHomography(self._unscale(self.calibration_points),
+                                 self._unscale(self.points / self.counts),
+                                 cv2.RANSAC, 5.0)
+
+    def _unscale(self, array):
+        return (array * 255).astype(np.int32)
+    async def decorate_frame(self, frame, name):
+        if name == 'calibration':
+            cv2.circle(frame, self.points[self.index, :] / self.counts[self.index], 10, (255,0,0), -1)
+            return frame
+        else:
+            return cv2.warpPerspective(frame, self.transform, frame.shape)
+
+
+    @property
+    def objects(self):
+        return [self.objects[index]]
+
 class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
     def __init__(self, camera, rect=None, stride=1):
