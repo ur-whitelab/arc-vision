@@ -41,7 +41,7 @@ class Camera:
         # try turning off autofocus
         # could be mp4 file, so catch error
         try:
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            #self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
         except cv2.error:
             pass
@@ -193,7 +193,7 @@ class Camera:
                 ret, frame = self.cap.retrieve()
                 print('strobe finished {}'.format(time.perf_counter() - startTime))
                 #sys.stdout.flush()
-                await asyncio.sleep(2)
+                #await asyncio.sleep(2)
             self.frame_ind += 1
         else:
             ret, frame = True, self.frame

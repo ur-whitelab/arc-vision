@@ -45,7 +45,7 @@ class Controller:
 
         #settings
         self.settings = {'mode': 'background', 'pause': False, 'descriptor': 'BRISK', 'descriptor_threshold': 30, 'descriptor_threshold_bounds': (1,30), 'descriptor_threshold_step': 1}
-        self.modes = ['background', 'detection', 'training', 'extent']
+        self.modes = ['background', 'detection', 'training', 'extent', 'calibration']
         self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
         self.descriptor = cv2.BRISK_create()
         self.processors = []
@@ -107,6 +107,9 @@ class Controller:
             elif mode == 'background':
                 self._reset_processors()
                 self.processors = [BackgroundProcessor(self.cam)]
+            elif mode == 'calibration':
+                self._reset_processors()
+                self.processors = [CalibrationProcessor(self.cam, self.background)]
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.background, self.img_db, self.descriptor)]

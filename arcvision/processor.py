@@ -1,7 +1,9 @@
 import asyncio
 import random
+import sys
 import cv2
 import numpy as np
+from numpy import linalg
 import matplotlib.pyplot as plt
 from .utils import *
 
@@ -27,69 +29,97 @@ class Processor:
     def close(self):
         self.camera.remove_frame_processor(self)
 
-class CalibrationProcessor:
-    def __init__(self, camera, background, stride=1, N=100, delay=10):
+class CalibrationProcessor(Processor):
+    '''This will find a perspective transform that goes from our coordinate system
+       to the projector coordinate system. '''
+    def __init__(self, camera, background, stride=1, N=25, delay=1, stay=3):
+        self.segmenter = SegmentProcessor(camera, background, -1, 1, max_rectangle=0.1)
         super().__init__(camera, ['calibration', 'transform'], stride)
 
-        self.calibration_points = np.random.random( (N, 2))
-        self.objects = []
-        for i,c in enumerate(calibration_points):
-            o = dict()
-            o['id'] = 'calibration-{}'.format(i)
+        self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
+        print(self.calibration_points)
+        self._objects = []
+        for i,c in enumerate(self.calibration_points):
+            o = {}
+            o['id'] = object_id()
             o['center_scaled'] = c
             o['label'] = 'calibration-point'
+            self._objects.append(o)
 
         self.index = 0
         self.delay = delay
-        self.segmenter = SegmentProcessor(camera, background, 1, 1)
-        self.points = np.zeroes( (N, 2) )
-        self.counts = np.zeroes( (N, 1) )
+        self.stay = stay
+        self.points = np.zeros( (N, 2) )
+        self.counts = np.zeros( (N, 1) )
 
         self.do_calibrate = True
         self.N = N
 
-        self.transform = np.ones( (3, 3) )
-        self.transform[:, 2] = 0
+        self.transform = np.identity(3)
+
+    def close(self):
+        super().close()
+        self.segmenter.close()
 
     async def process_frame(self, frame, frame_ind):
         if self.do_calibrate:
-            seg = next(self.segmenter.segments(frame))
-            if seg:
-                p = rect_scaled_center(seg, frame)
-                self.points[self.index] += p
-                self.counts[self.index] += 1
-                if(frame_ind % delay == 0):
-                    self.index += 1
-                    self.index %= self.N
+            try:
+                if frame_ind % (self.stay + self.delay) > self.delay:
+                    seg = next(self.segmenter.segments(frame))
+                    p = rect_scaled_center(seg, frame)
+                    self.points[self.index] += p
+                    self.counts[self.index] += 1
+            except StopIteration:
+                pass
 
-            # update homography estimate
-            if(self.index == self.N - 1):
-                self._update_homography()
-                self.points[:] = 0
-                self.counts[:] = 0
+            if frame_ind % (self.stay + self.delay) == 0:
+                # update homography estimate
+                if self.index == self.N - 1:
+                    print('updating homography')
+                    self._update_homography(frame)
+                    print(self.transform)
+                    self.points[:] = 0
+                    self.counts[:] = 0
+                self.index += 1
+                self.index %= self.N
 
             return frame
         else:
             return cv2.warpPerspective(frame, self.transform, frame.shape)
 
-    def _update_homography(self):
-        self.transform, _ = cv2.findHomography(self._unscale(self.calibration_points),
-                                 self._unscale(self.points / self.counts),
-                                 cv2.RANSAC, 5.0)
+    def _update_homography(self, frame):
+        self.transform, _ = cv2.findHomography(self.points / self.counts,
+                                self.calibration_points,
+                                 cv2.LMEDS)
+        if self.transform is None:
+            print('homography failed')
+            self.transform = np.identity(3)
+        else:
+            self.transform = self.transform.astype(np.float)
 
-    def _unscale(self, array):
-        return (array * 255).astype(np.int32)
+    def _unscale(self, array, shape):
+        return (array * shape[:2]).astype(np.int32)
     async def decorate_frame(self, frame, name):
-        if name == 'calibration':
-            cv2.circle(frame, self.points[self.index, :] / self.counts[self.index], 10, (255,0,0), -1)
-            return frame
-        else:
-            return cv2.warpPerspective(frame, self.transform, frame.shape)
+        if name == 'calibration' or name == 'transform':
+            p = self.calibration_points[self.index, :]
+            c = cv2.perspectiveTransform(p.reshape(-1, 1, 2), linalg.inv(self.transform)).reshape(2)
+            c *= frame.shape[:2]
+            cv2.circle(frame,
+                        tuple(c.astype(np.int)), 10, (255,0,0), -1)
+            cv2.circle(frame,
+                        tuple(self._unscale(self.points[self.index] / self.counts[self.index],
+                            frame.shape)), 10, (0,0,255), -1)
+        if name == 'transform':
+            for i in range(frame.shape[2]):
+                frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
+                                                    self.transform,
+                                                     frame.shape[1::-1])
+        return frame
 
 
     @property
     def objects(self):
-        return [self.objects[index]]
+        return [self._objects[self.index]]
 
 class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
