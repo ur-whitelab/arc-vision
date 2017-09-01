@@ -33,9 +33,7 @@ class Camera:
         self.frame_ind = 1
         self.stream_names = {'Base': ['raw']}
         self.paused = False
-        self.strobe = False
         self.strobe_socket = strobe_socket
-        self.set_strobe_args(5 / 60, 10 / 30, 10, 10)
 
         self.cap = cv2.VideoCapture(self.video_file)
 
@@ -65,19 +63,6 @@ class Camera:
 
         # I'm a simple man
         self.decorate_index = min(len(self.frame_processors), self.decorate_index)
-
-    def start_strobe(self):
-        self.strobe = True
-
-    def set_strobe_args(self, input_delay, duration, pre_flush, post_flush, post_delay = 0):
-        self._input_delay = input_delay
-        self._duration = duration
-        self._pre_flush = pre_flush
-        self._post_flush = post_flush
-        self._post_delay = post_delay
-
-    def stop_strobe(self):
-        self.strobe = False
 
 
     async def _process_frame(self, frame, frame_ind):
@@ -158,34 +143,7 @@ class Camera:
             self.frame_ind = 1
             self.cap = cv2.VideoCapture(self.video_file)
         if not self.paused:
-            # strobe
-            if(self.strobe):
-                #print('requesting strobe')
-                strobTime = time.perf_counter()
-                startTime = time.perf_counter()
-                self._flush_buffers(self._pre_flush)
-                #print('pre-flushed after {}, sleeping for {}'.format(time.perf_counter() - startTime,
-                                                              #self._input_delay - (time.perf_counter() - startTime)))
-                await asyncio.sleep(self._input_delay - (time.perf_counter() - startTime))
-                startTime = time.perf_counter()
-                self.strobe_socket.send('start'.encode())
-                self.strobe_socket.recv()
-                await asyncio.sleep(self._duration)
-                self._flush_buffers(self._post_flush)
-                #print('post-flushed after {}'.format(time.perf_counter() - startTime))
-                self.cap.grab()
-                #print('grabbed after {}'.format(time.perf_counter() - startTime))
-                startTime = time.perf_counter()
-            else:
-                ret, frame = self.cap.read()
-            if(self.strobe):
-                self.strobe_socket.send('done'.encode())
-                self.strobe_socket.recv()
-                #print('Sent ack after {}'.format(time.perf_counter() - startTime))
-                ret, frame = self.cap.retrieve()
-                #print('strobe finished after {}'.format(time.perf_counter() - strobTime))
-                #sys.stdout.flush()
-                await asyncio.sleep(self._post_delay)
+            ret, frame = self.cap.read()
             self.frame_ind += 1
         else:
             ret, frame = True, self.raw_frame.copy()

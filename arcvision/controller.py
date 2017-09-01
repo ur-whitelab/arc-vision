@@ -54,8 +54,7 @@ class Controller:
                       'detection',
                       'training',
                       'extent',
-                      'calibration',
-                      'strobe']
+                      'calibration']
         self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
         self.descriptor = cv2.BRISK_create()
         self.processors = []
@@ -109,14 +108,12 @@ class Controller:
 
         status = 'settings_updated'
         if 'mode' in settings and settings['mode'] != self.settings['mode']:
-            self.cam.stop_strobe()
             mode = settings['mode']
             if mode in self.modes:
                 self.settings['mode'] = mode
             if mode == 'detection':
                 self._reset_processors()
                 self._start_detection()
-                #self.cam.start_strobe()
             elif mode == 'background':
                 self._reset_processors()
                 self.processors = [BackgroundProcessor(self.cam)]
@@ -128,9 +125,6 @@ class Controller:
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.background, self.img_db, self.descriptor)]
-            elif mode == 'strobe':
-                self._reset_processors()
-                self.processors = [StrobeProcessor(self.cam, self.background)]
             elif mode == 'extent':
                 self._reset_processors()
                 self.processors = [SegmentProcessor(self.cam, self.background, 16, 1, 1)]
