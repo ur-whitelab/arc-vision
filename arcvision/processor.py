@@ -32,17 +32,19 @@ class Processor:
 
 class ProjectorProcessor(Processor):
     def __init__(self, camera, projector_socket):
-        super().__init__(camera, ['transform', 'subtraction'], 1)
+        super().__init__(camera, ['subtraction'], 1)
         self.sock = projector_socket
+        self.current = 0
 
     async def process_frame(self, frame, frame_ind):
-        await self.sock.send('800-600')
-        jpg = await self.sock.recv()
-        print(jpg)
+        await self.sock.send('{}-{}'.format(frame.shape[1], frame.shape[0]).encode())
+        jpg = np.fromstring(await self.sock.recv(), np.uint8)
+        img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
+        self.current = img
         return frame
 
     async def decorate_frame(self, frame, name):
-        return frame
+        return frame - self.current
 
 class CalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
