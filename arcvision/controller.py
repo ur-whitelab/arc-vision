@@ -73,12 +73,13 @@ class Controller:
     async def handle_start(self, video_filename, server_port, template_dir, crop):
         '''Begin processing webcam and updating state'''
 
-        self.cam = Camera(self.projector_sock, video_filename)
+        self.cam = Camera(video_filename)
         self.img_db = ImageDB(template_dir)
         start_server(self.cam, self, server_port)
         print('Started arcvision server')
 
         self.crop_processor = CropProcessor(self.cam, crop)
+        ProjectorProcessor(self.cam, self.projector_sock)
         #PreprocessProcessor(self.cam)
         self.processors = [BackgroundProcessor(self.cam)]
 

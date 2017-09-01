@@ -30,6 +30,20 @@ class Processor:
         self.camera.remove_frame_processor(self)
 
 
+class ProjectorProcessor(Processor):
+    def __init__(self, camera, projector_socket):
+        super().__init__(camera, ['transform', 'subtraction'], 1)
+        self.sock = projector_socket
+
+    async def process_frame(self, frame, frame_ind):
+        await self.sock.send('800-600')
+        jpg = await self.sock.recv()
+        print(jpg)
+        return frame
+
+    async def decorate_frame(self, frame, name):
+        return frame
+
 class CalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
        to the projector coordinate system. '''

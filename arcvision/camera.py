@@ -12,7 +12,7 @@ import time
 
 class Camera:
     '''Class for managing processing video frames'''
-    def __init__(self, strobe_socket, video_file=-1, frame_buffer=10):
+    def __init__(self, video_file=-1, frame_buffer=10):
 
         if video_file == '':
             video_file = 0
@@ -33,7 +33,6 @@ class Camera:
         self.frame_ind = 1
         self.stream_names = {'Base': ['raw']}
         self.paused = False
-        self.strobe_socket = strobe_socket
 
         self.cap = cv2.VideoCapture(self.video_file)
 
