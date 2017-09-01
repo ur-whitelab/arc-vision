@@ -29,10 +29,85 @@ class Processor:
     def close(self):
         self.camera.remove_frame_processor(self)
 
+
+class StrobeProcessor(Processor):
+    ''' This will tune camera parameters to optimize strobe'''
+    def __init__(self, camera, background, stride=1):
+        super().__init__(camera, ['strobe'], stride)
+        # these starting points should work
+        self.strobe_args = [1 / 60, 1 / 60, 10, 10]
+        self.proposed_args = self.strobe_args[:]
+        self.strobe_steps = [1 / 60, 0, 1, 1]
+        self.best_args = self.strobe_args[:]
+        self.best_score = 100
+        self._prob = 0.5
+        self.camera.set_strobe_args(*self.strobe_args, 0.4)
+        self.camera.start_strobe()
+        self.background = background
+        self.index_start = camera.frame_ind
+
+    def close(self):
+        self.camera.set_strobe_args(*self.best_args, 0.2)
+        super().close()
+
+    def _arg_score(self):
+        return self.strobe_args[1] * 30 * 5 + self.strobe_args[3]
+        #return sum([x / y for x,y in zip(self.strobe_args, self.strobe_steps)])
+
+    def _update(self, args, scale=1):
+        scale = int(scale)
+        for i in range(len(args)):
+            if random.random() < self._prob:
+                args[i] += self.strobe_steps[i] *  int(random.randint(-scale, scale))
+                # none can be less than 0
+                args[i] = max(0, args[i])
+                # input delay cannot be more than 15 frames
+                if i == 0:
+                    args[0] = min(15 / 60, args[0])
+        self.camera.set_strobe_args(*self.strobe_args, 0.4)
+
+    def _is_strobed(self, frame):
+        # look for green.
+        print(np.mean(frame - self.background, axis=(0,1))[1] > 150, np.mean(frame - self.background, axis=(0,1))[1])
+        return np.mean(frame - self.background, axis=(0,1))[1] > 150
+
+    async def process_frame(self, frame, frame_ind):
+        ''' some quasi monte carlo'''
+        self.success = self._is_strobed(frame)
+        if(not self.success):
+            # randomly accept bad one
+            if random.random() < 0.3:
+                self.strobe_args = self.proposed_args
+        else:
+            # good params, check if best
+            if(self._arg_score() < self.best_score):
+                self.best_args = self.strobe_args[:]
+                self.best_score = self._arg_score()
+            self.strobe_args = self.proposed_args
+
+        args = self.strobe_args[:]
+        scale = 20 / (frame_ind + 1 - self.index_start) # add 1 for start / 0
+        self._update(args, max(1, scale))
+        self.proposed_args = args
+        return frame
+
+    async def decorate_frame(self, frame, name):
+        if name == 'strobe':
+            cv2.putText(frame,
+                    'Current: {}'.format(self.strobe_args),
+                    (100, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,124,255))
+            cv2.putText(frame,
+                    'Best Strobe: {} ({})'.format(self.best_args, self.best_score),
+                    (0, 250),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,255))
+            cv2.putText(frame, 'Status: {}'.format(self.success), (0, 350), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,255))
+        return frame
+
 class CalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
        to the projector coordinate system. '''
-    def __init__(self, camera, background, stride=1, N=25, delay=1, stay=3):
+    def __init__(self, camera, background, stride=1, N=8, delay=2, stay=3):
         self.segmenter = SegmentProcessor(camera, background, -1, 1, max_rectangle=0.1)
         super().__init__(camera, ['calibration', 'transform'], stride)
 
@@ -51,9 +126,8 @@ class CalibrationProcessor(Processor):
         self.stay = stay
         self.points = np.zeros( (N, 2) )
         self.counts = np.zeros( (N, 1) )
-
-        self.do_calibrate = True
         self.N = N
+        self.first = True
 
         self.transform = np.identity(3)
 
@@ -62,40 +136,41 @@ class CalibrationProcessor(Processor):
         self.segmenter.close()
 
     async def process_frame(self, frame, frame_ind):
-        if self.do_calibrate:
-            try:
-                if frame_ind % (self.stay + self.delay) > self.delay:
-                    seg = next(self.segmenter.segments(frame))
-                    p = rect_scaled_center(seg, frame)
-                    self.points[self.index] += p
-                    self.counts[self.index] += 1
-            except StopIteration:
-                pass
+        try:
+            if frame_ind % (self.stay + self.delay) > self.delay:
+                seg = next(self.segmenter.segments(frame))
+                p = rect_scaled_center(seg, frame)
+                self.points[self.index] += p
+                self.counts[self.index] += 1
+        except StopIteration:
+            pass
 
-            if frame_ind % (self.stay + self.delay) == 0:
-                # update homography estimate
-                if self.index == self.N - 1:
-                    print('updating homography')
-                    self._update_homography(frame)
-                    print(self.transform)
-                    self.points[:] = 0
-                    self.counts[:] = 0
-                self.index += 1
-                self.index %= self.N
+        if frame_ind % (self.stay + self.delay) == 0:
+            # update homography estimate
+            if self.index == self.N - 1:
+                print('updating homography')
+                self._update_homography(frame)
+                print(self.transform)
+                self.points[:] = 0
+                self.counts[:] = 0
+            self.index += 1
+            self.index %= self.N
 
-            return frame
-        else:
-            return cv2.warpPerspective(frame, self.transform, frame.shape)
+        return frame
+
 
     def _update_homography(self, frame):
-        self.transform, _ = cv2.findHomography(self.points / self.counts,
+        t, _ = cv2.findHomography(self.points / self.counts,
                                 self.calibration_points,
                                  cv2.LMEDS)
-        if self.transform is None:
+        if t is None:
             print('homography failed')
-            self.transform = np.identity(3)
         else:
-            self.transform = self.transform.astype(np.float)
+            if(self.first):
+                self.transform = t
+                self.first = True
+            else:
+                self.transform = self.transform * 0.7 + t * 0.3
 
     def _unscale(self, array, shape):
         return (array * shape[:2]).astype(np.int32)

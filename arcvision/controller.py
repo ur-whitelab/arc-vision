@@ -44,12 +44,23 @@ class Controller:
         self.vision_state.time = 0
 
         #settings
-        self.settings = {'mode': 'background', 'pause': False, 'descriptor': 'BRISK', 'descriptor_threshold': 30, 'descriptor_threshold_bounds': (1,30), 'descriptor_threshold_step': 1}
-        self.modes = ['background', 'detection', 'training', 'extent', 'calibration']
+        self.settings = {'mode': 'background',
+                         'pause': False,
+                         'descriptor': 'BRISK',
+                         'descriptor_threshold': 25,
+                         'descriptor_threshold_bounds': (1,30),
+                         'descriptor_threshold_step': 1}
+        self.modes = ['background',
+                      'detection',
+                      'training',
+                      'extent',
+                      'calibration',
+                      'strobe']
         self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
         self.descriptor = cv2.BRISK_create()
         self.processors = []
         self.background = None
+        self.transform = np.identity(3)
 
     def get_state_json(self):
         if self.settings['mode'] == 'training':
@@ -85,6 +96,8 @@ class Controller:
                 bg = p.get_background()
                 if bg is not None:
                     self.background = bg
+            elif p.__class__ == CalibrationProcessor:
+                self.transform = p.transform
         [x.close() for x in self.processors]
         self.processors = []
 
@@ -103,16 +116,21 @@ class Controller:
             if mode == 'detection':
                 self._reset_processors()
                 self._start_detection()
-                #await self.cam.start_strobe()
+                #self.cam.start_strobe()
             elif mode == 'background':
                 self._reset_processors()
                 self.processors = [BackgroundProcessor(self.cam)]
             elif mode == 'calibration':
                 self._reset_processors()
+                # reset my transform, so it doesn't intefere
+                self.transform = np.identity(3)
                 self.processors = [CalibrationProcessor(self.cam, self.background)]
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.background, self.img_db, self.descriptor)]
+            elif mode == 'strobe':
+                self._reset_processors()
+                self.processors = [StrobeProcessor(self.cam, self.background)]
             elif mode == 'extent':
                 self._reset_processors()
                 self.processors = [SegmentProcessor(self.cam, self.background, 16, 1, 1)]
@@ -239,7 +257,8 @@ class Controller:
         # now update
         for o in self.processors[0].objects:
             node = self.vision_state.nodes[o['id']]
-            node.position[:] = o['center_scaled']
+            p = np.array(o['center_scaled']).reshape(-1, 1, 2)
+            node.position[:] = cv2.perspectiveTransform(p, self.transform).reshape(2)
             node.label = o['label']
             node.id = o['id']
             node.delete = False

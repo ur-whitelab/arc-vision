@@ -35,6 +35,7 @@ class Camera:
         self.paused = False
         self.strobe = False
         self.strobe_socket = strobe_socket
+        self.set_strobe_args(5 / 60, 10 / 30, 10, 10)
 
         self.cap = cv2.VideoCapture(self.video_file)
 
@@ -61,35 +62,37 @@ class Camera:
         # I'm a simple man
         self.decorate_index = min(len(self.frame_processors), self.decorate_index)
 
-    async def start_strobe(self):
-        await self._calibrate_cap_time()
-        print('Starting strobe. Will flush with {} as marker time'.format(self.frame_cap_time))
+    def start_strobe(self):
         self.strobe = True
+
+    def set_strobe_args(self, input_delay, duration, pre_flush, post_flush, post_delay = 0):
+        self._input_delay = input_delay
+        self._duration = duration
+        self._pre_flush = pre_flush
+        self._post_flush = post_flush
+        self._post_delay = post_delay
 
     def stop_strobe(self):
         self.strobe = False
 
 
-    async def _process_frame(self):
+    async def _process_frame(self, frame, frame_ind):
         '''Process the frames. We only update the decorated frame when necessary'''
-
-        if self.paused:
-            self.frame = self.raw_frame.copy()
 
         update_decorated = False
         if self.decorate_index > 0:
             #check if the requested decorated frame will be updated
-            update_decorated =  self.frame_ind % self.frame_processors[self.decorate_index - 1].stride == 0 #off by one so 0 can indicate no processing
+            update_decorated =  frame_ind % self.frame_processors[self.decorate_index - 1].stride == 0 #off by one so 0 can indicate no processing
         if update_decorated or self.decorate_index == 0:
-            self.decorated_frame = self.frame.copy()
+            self.decorated_frame = frame.copy()
 
         start_dims = self.frame.shape
         for i,p in enumerate(self.frame_processors):
-            if self.frame_ind % p.stride == 0:
+            if frame_ind % p.stride == 0:
                 #process frame
-                self.frame = await p.process_frame(self.frame, self.frame_ind)
+                self.frame = await p.process_frame(frame, frame_ind)
 
-                assert self.frame is not None, \
+                assert frame is not None, \
                     'Processer {} returned None on Process Frame {}'.format(type(p).__name__, self.frame_ind)
 
                 assert len(self.frame.shape) == len(start_dims), \
@@ -135,32 +138,15 @@ class Camera:
             if ret and frame is not None:
                 # normal update
                 self.frame = frame
-                task = asyncio.ensure_future(self._process_frame())
+                task = asyncio.ensure_future(self._process_frame(frame, self.frame_ind))
                 await asyncio.sleep(0)
                 await asyncio.gather(task)
                 return True
         return False
 
     def _flush_buffers(self, N=5):
-
         for i in range(N):
-            startTime = time.perf_counter()
             self.cap.grab()
-            self.cap.retrieve()
-            diff = time.perf_counter() - startTime
-            if(diff > 5 * self.frame_cap_time):
-                print('broken after', diff)
-                return
-        print('broken on iteration')
-    async def _calibrate_cap_time(self, N = 3):
-        self.frame_cap_time = 0
-        for i in range(N):
-            await asyncio.sleep(0)
-            startTime = time.perf_counter()
-            self.cap.grab()
-            self.cap.retrieve()
-            self.frame_cap_time += time.perf_counter() - startTime
-        self.frame_cap_time /= N
 
     async def _cap_frame(self):
         if self.frame_ind - 1 == self.cap.get(cv2.CAP_PROP_FRAME_COUNT):
@@ -170,33 +156,35 @@ class Camera:
         if not self.paused:
             # strobe
             if(self.strobe):
-                print('requesting strobe')
-                sys.stdout.flush()
+                #print('requesting strobe')
+                strobTime = time.perf_counter()
                 startTime = time.perf_counter()
-                self._flush_buffers(2)
-                print('flushed after {}'.format(time.perf_counter() - startTime))
+                self._flush_buffers(self._pre_flush)
+                #print('pre-flushed after {}, sleeping for {}'.format(time.perf_counter() - startTime,
+                                                              #self._input_delay - (time.perf_counter() - startTime)))
+                await asyncio.sleep(self._input_delay - (time.perf_counter() - startTime))
                 startTime = time.perf_counter()
                 self.strobe_socket.send('start'.encode())
                 self.strobe_socket.recv()
-                self._flush_buffers(2)
+                await asyncio.sleep(self._duration)
+                self._flush_buffers(self._post_flush)
+                #print('post-flushed after {}'.format(time.perf_counter() - startTime))
                 self.cap.grab()
-                print('grabbed after {}'.format(time.perf_counter() - startTime))
+                #print('grabbed after {}'.format(time.perf_counter() - startTime))
                 startTime = time.perf_counter()
-                #sys.stdout.flush()
-                self.cap.grab() # empty buffer
             else:
                 ret, frame = self.cap.read()
             if(self.strobe):
                 self.strobe_socket.send('done'.encode())
-                print('Sent done after {}'.format(time.perf_counter() - startTime))
                 self.strobe_socket.recv()
+                #print('Sent ack after {}'.format(time.perf_counter() - startTime))
                 ret, frame = self.cap.retrieve()
-                print('strobe finished {}'.format(time.perf_counter() - startTime))
+                #print('strobe finished after {}'.format(time.perf_counter() - strobTime))
                 #sys.stdout.flush()
-                #await asyncio.sleep(2)
+                await asyncio.sleep(self._post_delay)
             self.frame_ind += 1
         else:
-            ret, frame = True, self.frame
+            ret, frame = True, self.raw_frame.copy()
         return ret, frame
 
     def get_frame(self):
