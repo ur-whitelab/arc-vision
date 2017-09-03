@@ -46,21 +46,22 @@ class ProjectorProcessor(Processor):
     async def decorate_frame(self, frame, name):
         return frame - self.current
 
-class CalibrationProcessor(Processor):
+
+class SpatialCalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
-       to the projector coordinate system. '''
-    def __init__(self, camera, background, stride=1, N=25, delay=3, stay=6):
-        self.segmenter = SegmentProcessor(camera, background, -1, 1, max_rectangle=0.05)
+       to the projector coordinate system. Convergence in done by using point guess in next round with
+       previous round estimate'''
+    def __init__(self, camera, background, channel=2, stride=1, N=16, delay=3, stay=5):
+        self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.05, channel=channel)
         super().__init__(camera, ['calibration', 'transform'], stride)
 
         self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
-        self._objects = []
-        for i,c in enumerate(self.calibration_points):
-            o = {}
-            o['id'] = object_id()
-            o['center_scaled'] = c
-            o['label'] = 'calibration-point'
-            self._objects.append(o)
+
+        o = {}
+        o['id'] = object_id()
+        o['center_scaled'] = None
+        o['label'] = 'calibration-point'
+        self._objects = [o]
 
         self.index = 0
         self.delay = delay
@@ -69,97 +70,123 @@ class CalibrationProcessor(Processor):
         self.counts = np.zeros( (N, 1) )
         self.N = N
         self.first = True
+        self.channel = channel
 
-        self.transform = np.identity(3)
-        self.scaled_transform = np.identity(3)
-        self.fit = np.inf
+        self._transform = np.identity(3)
+        self._scaled_transform = np.identity(3)
+        self._best_scaled_transform = np.identity(3)
+        self._best_fit = np.inf
+        self.fit = 100
+
+        self.calibrate = True
 
     def close(self):
         super().close()
         self.segmenter.close()
 
+
     async def process_frame(self, frame, frame_ind):
-        try:
-            if frame_ind % (self.stay + self.delay) > self.delay:
-                seg = next(self.segmenter.segments(frame))
-                p = rect_scaled_center(seg, frame)
-                self.points[self.index, :] += p
-                self.counts[self.index] += 1
-        except StopIteration:
-            pass
+        if self.calibrate:
+            self._calibrate()
+
+        for i in range(frame.shape[2]):
+            frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
+                                            self._best_scaled_transform,
+                                            frame.shape[1::-1])
+
+        return frame
+
+    def _calibrate(self, frame, frame_ind):
+        if frame_ind % (self.stay + self.delay) > self.delay:
+            for seg in self.segmenter.segments(frame):
+                if(rect_color_channel(frame, seg) == self.channel):
+                    p = rect_scaled_center(seg, frame)
+                    self.points[self.index, :] = self.points[self.index, :] * self.counts[self.index] / (self.counts[self.index] + 1) + p / (self.counts[self.index] + 1)
+                    self.counts[self.index] += 1
+                    break
+
 
         if frame_ind % (self.stay + self.delay) == 0:
             # update homography estimate
             if self.index == self.N - 1:
                 print('updating homography')
                 self._update_homography(frame)
-                print(self.transform)
-                self.points[:] = 0
-                self.counts[:] = 0
-                #self.calibration_points = np.random.random( (self.N, 2)) * 0.9 + 0.1
+                print(self._transform)
+                self.calibration_points = np.random.random( (self.N, 2)) * 0.8 + 0.1
+                #seed next round with fit, weighted by how well the homography fit
+                self.points[:] = cv2.perspectiveTransform(self.calibration_points.reshape(-1,1,2), linalg.inv(self._transform)).reshape(-1,2)
+                self.counts[:] = max(0, (0.01 - self.fit) * 10)
             self.index += 1
             self.index %= self.N
 
-        return frame
-
 
     def _update_homography(self, frame):
-        t, _ = cv2.findHomography((self.points / self.counts).reshape(-1, 1, 2),
-                                self.calibration_points.reshape(-1, 1, 2),
-                                cv2.RANSAC, 3.0)
-        ts, _ = cv2.findHomography(self._unscale(self.calibration_points, frame.shape).reshape(-1, 1, 2),
-                    self._unscale(self.points / self.counts, frame.shape).reshape(-1, 1, 2),
-                    cv2.RANSAC, 3.0)
+        if(np.sum(self.counts > 0) < 5):
+            return
+        t, mask = cv2.findHomography((self.points[self.counts[:,0] > 0, :]).reshape(-1, 1, 2),
+                                self.calibration_points[self.counts[:,0] > 0, :].reshape(-1, 1, 2),
+                                0)
+        print('---------------')
+        p = cv2.perspectiveTransform((self.points).reshape(-1, 1, 2), self._transform).reshape(-1, 2)
+        for i in range(self.N):
+            #print('Points  {} (used:{}): ({}) ({}) ({})'.format(i, mask[i], self.points[i,:], p[i, :], self.calibration_points[i,:]))
+            print('Points  {}: ({}) ({}) ({})'.format(i, self.points[i,:], p[i, :], self.calibration_points[i,:]))
+        print('---------------')
+        ts, _ = cv2.findHomography(self._unscale(self.points[self.counts[:,0] > 0, :], frame.shape).reshape(-1, 1, 2),
+                    self._unscale(self.calibration_points[self.counts[:,0] > 0,:], frame.shape).reshape(-1, 1, 2),
+                    0)
         if t is None:
             print('homography failed')
         else:
             if(self.first):
-                self.transform = t
-                self.scaled_transform = ts
+                self._transform = t
+                self._scaled_transform = ts
                 self.first = True
             else:
-                self.transform = self.transform * 0.7 + t * 0.3
-                self.scaled_transform = self.scaled_transform * 0.7 + ts * 0.3
+                self._transform = self._transform * 0.7 + t * 0.3
+                self._scaled_transform = self._scaled_transform * 0.7 + ts * 0.3
         # get fit relative to identity
-        self.fit = linalg.norm(self.calibration_points.reshape(-1, 1, 2) - cv2.perspectiveTransform((self.points / self.counts).reshape(-1, 1, 2), self.transform)) /\
-                    linalg.norm(self.calibration_points.reshape(-1, 1, 2) - cv2.perspectiveTransform((self.points / self.counts).reshape(-1, 1, 2), np.identity(3)))
-
+        self.fit = linalg.norm(self.calibration_points.reshape(-1, 1, 2) - cv2.perspectiveTransform((self.points).reshape(-1, 1, 2), self._transform)) / self.N
+        if self.fit < self._best_fit:
+            self._best_scaled_transform = self._scaled_transform
+            self._best_fit = self.fit
 
     def _unscale(self, array, shape):
         return (array * [shape[1], shape[0]]).astype(np.int32)
+
     async def decorate_frame(self, frame, name):
+        if name == 'transform':
+            for i in range(frame.shape[2]):
+                frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
+                                                     self._scaled_transform,
+                                                     frame.shape[1::-1])
         if name == 'calibration' or name == 'transform':
-            i = self.index
-            p = self.calibration_points[i, :]
-            c = cv2.perspectiveTransform(p.reshape(-1, 1, 2), linalg.inv(self.transform)).reshape(2)
-            c = self._unscale(c, frame.shape)
-            cv2.circle(frame,
-                        tuple(self._unscale(self.points[i] / self.counts[i],
-                            frame.shape)), 10, (0,0,255), -1)
-            cv2.circle(frame,
-                        tuple(c.astype(np.int)), 10, (255,0,0), -1)
-            cv2.circle(frame,
-                        tuple(self._unscale(self.calibration_points[i, :],
-                            frame.shape)), 10, (0,255, 255), -1)
+            for i in range(self.N):
+                p = self.calibration_points[i, :]
+                c = cv2.perspectiveTransform(p.reshape(-1, 1, 2), linalg.inv(self._transform)).reshape(2)
+                c = self._unscale(c, frame.shape)
+                cv2.circle(frame,
+                            tuple(self._unscale(self.points[i],
+                                frame.shape)), 10, (0,0,255), -1)
+                cv2.circle(frame,
+                            tuple(c.astype(np.int)), 10, (255,0,0), -1)
+                cv2.circle(frame,
+                            tuple(self._unscale(self.calibration_points[i, :],
+                                frame.shape)), 10, (0,255, 255), -1)
             p = np.array( [[0, 0], [0, 1], [1, 1], [1, 0]], np.float).reshape(-1, 1, 2)
-            c = cv2.perspectiveTransform(p, linalg.inv(self.transform))
+            c = cv2.perspectiveTransform(p, linalg.inv(self._transform))
             c = self._unscale(c, frame.shape)
             cv2.polylines(frame, [c], True, (0, 255, 125), 4)
         cv2.putText(frame,
                 'Homography Fit: {}'.format(self.fit),
                 (100, 250),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,124,255))
-        if name == 'transform':
-            for i in range(frame.shape[2]):
-                frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
-                                                     self.scaled_transform,
-                                                     frame.shape[1::-1])
         return frame
-
 
     @property
     def objects(self):
-        return [self._objects[self.index]]
+        self._objects[0]['center_scaled'] = self.calibration_points[self.index]
+        return self._objects
 
 class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
@@ -182,8 +209,6 @@ class PreprocessProcessor(Processor):
     def __init__(self, camera, stride=1, gamma=2.5):
         super().__init__(camera, ['preprocess'], stride)
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-
-
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
@@ -354,15 +379,15 @@ class TrackerProcessor(Processor):
         return True
 
 class SegmentProcessor(Processor):
-    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25):
+    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None):
         '''Pass stride = -1 to only process on request'''
         super().__init__(camera, [
 
                                   'background-subtract',
+                                  'background-filter-blur',
                                   'background-thresh',
                                   'background-erode',
                                   'background-open',
-                                  'background',
                                   'distance',
                                   'boxes',
                                   'watershed'
@@ -372,6 +397,7 @@ class SegmentProcessor(Processor):
         self.max_segments = max_segments
         self.max_rectangle = max_rectangle
         self.own_process = (stride != -1)
+        self.channel = channel
 
     async def process_frame(self, frame, frame_ind):
         '''we only process on request'''
@@ -391,25 +417,31 @@ class SegmentProcessor(Processor):
         yield from self.rect_iter
 
     def _filter_background(self, frame, name = ''):
-        #img = cv2.pyrMeanShiftFiltering(frame, 21, 51)
 
-        img = frame.copy()
         if(img.shape == self.background.shape):
+            img = frame.copy()
             img -= self.background
-
         if name == 'background-subtract':
             return img
-        img = cv2.blur(img, (6,6))
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = img
+        if self.channel is None:
+            if len(img.shape) == 3 and img.shape[2] == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img[:,:,self.channel]
+        gray = cv2.blur(gray, (3,3))
+        if name == 'background-filter-blur':
+            return gray
         ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        #bg = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        #                                cv2.THRESH_BINARY_INV,11,2)
         if np.mean(bg) > 255 // 2:
            bg = 255 - bg
-        #bg = th2 = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        #                                cv2.THRESH_BINARY_INV,11,2)
+
         if name == 'background-thresh':
             return bg
         # noise removal
-        kernel = np.ones((3,3),np.uint8)
+        kernel = np.ones((4,4),np.uint8)
         bg = cv2.erode(bg, kernel, iterations = 3)
         if name == 'background-erode':
             return bg
@@ -554,7 +586,7 @@ class TrainingProcessor(Processor):
         return self._objects
 
     ''' This will segment an ROI from the frame and you can label it'''
-    def __init__(self, camera, background, img_db, descriptor, max_segments=3):
+    def __init__(self, camera, img_db, descriptor, background = None, max_segments=3):
         super().__init__(camera, ['training'], 1)
         self.segmenter = SegmentProcessor(camera, background, -1, max_segments)
         self.img_db = img_db

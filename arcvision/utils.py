@@ -146,3 +146,7 @@ def rect_scaled_center(rect, frame):
     x = (rect[0] + rect[2] / 2) / frame.shape[1]
     y = (rect[1] + rect[3] / 2) / frame.shape[0]
     return (x,y)
+
+def rect_color_channel(frame, rect):
+    '''Returns which channel is maximum'''
+    return np.argmax(np.mean(rect_view(frame, rect), axis=(0,1)))

@@ -95,7 +95,7 @@ class Controller:
                 bg = p.get_background()
                 if bg is not None:
                     self.background = bg
-            elif p.__class__ == CalibrationProcessor:
+            elif p.__class__ == SpatialCalibrationProcessor:
                 self.transform = p.transform
         [x.close() for x in self.processors]
         self.processors = []
@@ -119,12 +119,10 @@ class Controller:
                 self.processors = [BackgroundProcessor(self.cam)]
             elif mode == 'calibration':
                 self._reset_processors()
-                # reset my transform, so it doesn't intefere
-                self.transform = np.identity(3)
-                self.processors = [CalibrationProcessor(self.cam, self.background)]
+                self.processors = [SpatialCalibrationProcessor(self.cam, self.background)]
             elif mode == 'training':
                 self._reset_processors()
-                self.processors = [TrainingProcessor(self.cam, self.background, self.img_db, self.descriptor)]
+                self.processors = [TrainingProcessor(self.cam, self.img_db, self.descriptor, self.background)]
             elif mode == 'extent':
                 self._reset_processors()
                 self.processors = [SegmentProcessor(self.cam, self.background, 16, 1, 1)]
@@ -251,8 +249,7 @@ class Controller:
         # now update
         for o in self.processors[0].objects:
             node = self.vision_state.nodes[o['id']]
-            p = np.array(o['center_scaled']).reshape(-1, 1, 2)
-            node.position[:] = cv2.perspectiveTransform(p, self.transform).reshape(2)
+            node.position[:] = o['center_scaled']
             node.label = o['label']
             node.id = o['id']
             node.delete = False
