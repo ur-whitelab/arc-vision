@@ -6,6 +6,7 @@ import numpy as np
 from numpy import linalg
 import matplotlib.pyplot as plt
 from .utils import *
+import scipy.stats as ss
 
 _object_id = 0
 
@@ -45,6 +46,38 @@ class ProjectorProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         return frame - self.current
+
+
+class ColorCalibrationProcessor(Processor):
+    '''
+    This will segment the frame and find the color mode in defined squares. This
+    requires the spatial calibration to be done so that the coordinates can be
+    transformed'''
+
+    def __init__(self, camera, grid_size=(8,8)):
+        super().__init__(camera, ['grid-select'] ,1)
+        self.grid_size = (8, 8)
+
+    def process_frame(self, frame, frame_ind):
+        pass
+
+    def _iter_rects(self, frame):
+        dims = [self.frame.shape[i] / w for i,w in enumerate(grid_size)]
+        #get 2D indices over grid size
+        for index in np.indices(self.grid_size).reshape(2, -1).T:
+            start = index * dims
+            yield (*start, *dims)
+
+
+    def decorate_frame(self, frame, name):
+        for r in self._iter_rects(frame):
+            draw_rectangle(frame, r, (255, 255, 255), 1)
+            color = ss.mode(rect_view(frame, r), axis=(0,1))
+            cv2.putText(frame,
+                '{}'.format(color),
+                (r[0], r[1]),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180,124,16))
+
 
 
 class SpatialCalibrationProcessor(Processor):

@@ -119,7 +119,8 @@ class Controller:
                 self.processors = [BackgroundProcessor(self.cam)]
             elif mode == 'calibration':
                 self._reset_processors()
-                self.processors = [SpatialCalibrationProcessor(self.cam, self.background)]
+                self.processors = [SpatialCalibrationProcessor(self.cam, self.background),
+                                   ColorCalibrationProcessor(self.cam)]
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.img_db, self.descriptor, self.background)]
