@@ -55,28 +55,36 @@ class ColorCalibrationProcessor(Processor):
     transformed'''
 
     def __init__(self, camera, grid_size=(8,8)):
-        super().__init__(camera, ['grid-select'] ,1)
+        super().__init__(camera, ['grid', 'modes'] ,1)
         self.grid_size = (8, 8)
 
-    def process_frame(self, frame, frame_ind):
-        pass
+    async def process_frame(self, frame, frame_ind):
+        return frame
 
     def _iter_rects(self, frame):
-        dims = [self.frame.shape[i] / w for i,w in enumerate(grid_size)]
+        dims = [frame.shape[i] // w for i,w in enumerate(self.grid_size)]
         #get 2D indices over grid size
-        for index in np.indices(self.grid_size).reshape(2, -1).T:
+        for index in np.indices( self.grid_size ).reshape(2, -1).T:
             start = index * dims
-            yield (*start, *dims)
+            yield (start[1], start[0], dims[1], dims[0])
+        return frame
+
+    async def decorate_frame(self, frame, name):
 
 
-    def decorate_frame(self, frame, name):
         for r in self._iter_rects(frame):
-            draw_rectangle(frame, r, (255, 255, 255), 1)
-            color = ss.mode(rect_view(frame, r), axis=(0,1))
+            #get the mode for each channel and convert to int from length-1 array
+            color = ( int(ss.mode(rect_view(frame[:,:,i], r).reshape(-1), axis=None)[0]) for i in range(frame.shape[2]) )
+            color = tuple(color)
+            if name == 'modes':
+                draw_rectangle(frame, r, color, -1)
+            else:
+                draw_rectangle(frame, r, (0, 0, 0), 1)
             cv2.putText(frame,
                 '{}'.format(color),
-                (r[0], r[1]),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180,124,16))
+                (r[0], r[1] + r[3] // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
+        return frame
 
 
 
@@ -120,7 +128,7 @@ class SpatialCalibrationProcessor(Processor):
 
     async def process_frame(self, frame, frame_ind):
         if self.calibrate:
-            self._calibrate()
+            self._calibrate(frame, frame_ind)
 
         for i in range(frame.shape[2]):
             frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
@@ -451,7 +459,7 @@ class SegmentProcessor(Processor):
 
     def _filter_background(self, frame, name = ''):
 
-        if(img.shape == self.background.shape):
+        if(frame.shape == self.background.shape):
             img = frame.copy()
             img -= self.background
         if name == 'background-subtract':

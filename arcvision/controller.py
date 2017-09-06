@@ -59,7 +59,6 @@ class Controller:
         self.descriptor = cv2.BRISK_create()
         self.processors = []
         self.background = None
-        self.transform = np.identity(3)
 
     def get_state_json(self):
         if self.settings['mode'] == 'training':
@@ -95,8 +94,6 @@ class Controller:
                 bg = p.get_background()
                 if bg is not None:
                     self.background = bg
-            elif p.__class__ == SpatialCalibrationProcessor:
-                self.transform = p.transform
         [x.close() for x in self.processors]
         self.processors = []
 
