@@ -54,11 +54,30 @@ class ColorCalibrationProcessor(Processor):
     requires the spatial calibration to be done so that the coordinates can be
     transformed'''
 
-    def __init__(self, camera, grid_size=(8,8)):
+    def __init__(self, camera, projector_socket, grid_size=(8,8)):
         super().__init__(camera, ['grid', 'modes'] ,1)
         self.grid_size = (8, 8)
+        self.sock = projector_socket
 
     async def process_frame(self, frame, frame_ind):
+
+        color_current = []
+        for color in self._iter_colors(frame):
+            color_current.append(list(color))
+        color_current = np.array(color_current, np.uint8).reshape(-1, 3)
+
+
+        await self.sock.send('{}-{}'.format(frame.shape[1], frame.shape[0]).encode())
+        jpg = np.fromstring(await self.sock.recv(), np.uint8)
+        img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
+
+        color_target = []
+        for color in self._iter_colors(img):
+            color_target.append(list(color))
+        color_target = np.array(color_target, np.uint8).reshape(-1, 3)
+
+        self._update_cap(color_target, color_current)
+
         return frame
 
     def _iter_rects(self, frame):
@@ -69,13 +88,30 @@ class ColorCalibrationProcessor(Processor):
             yield (start[1], start[0], dims[1], dims[0])
         return frame
 
-    async def decorate_frame(self, frame, name):
-
-
+    def _iter_colors(self, frame):
         for r in self._iter_rects(frame):
-            #get the mode for each channel and convert to int from length-1 array
+           #get the mode for each channel and convert to int from length-1 array
             color = ( int(ss.mode(rect_view(frame[:,:,i], r).reshape(-1), axis=None)[0]) for i in range(frame.shape[2]) )
             color = tuple(color)
+            yield r, color
+
+    def _update_cap(self, color_target, color_current):
+        '''Update the camera capture properties. Properties are defined in HSV space. color_target and color_current should
+           be arrays of colors'''
+        hsv_current = cv2.cvtColor(np.uint8(color_current).reshape(-1,1,3), cv2.COLOR_BGR2HSV)
+        hsv_target = cv2.cvtColor(np.uint8(color_target).reshape(-1,1,3), cv2.COLOR_BGR2HSV)
+
+        ratio = hsv_target.reshape(-1, 3) / hsv_current.reshape(-1, 3)
+        avg_ratio = np.mean(ratio, axis=0).reshape(3)
+
+        self.camera.cap.set(cv2.CAP_PROP_HUE, avg_ratio[0])
+        self.camera.cap.set(cv2.CAP_PROP_SATURATION, avg_ratio[0])
+        self.camera.cap.set(cv2.CAP_PROP_GAIN, avg_ratio[0])
+
+
+    async def decorate_frame(self, frame, name):
+
+        for r,color in self._iter_colors(frame):
             if name == 'modes':
                 draw_rectangle(frame, r, color, -1)
             else:
