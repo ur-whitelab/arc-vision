@@ -1,10 +1,13 @@
+import numpy as np
+import cv2
+
 from .processor import Processor
 
 class Projector(Processor):
     '''This will handle retrieving and caching the frame displayed by the proejctor at each frame'''
     def __init__(self, camera, projector_socket):
         super().__init__(camera, ['frame', 'transformed'], 1)
-        self.sock = self.projector_socket
+        self.sock = projector_socket
         self._transform = np.identity(3)
 
 

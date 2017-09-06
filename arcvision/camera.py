@@ -72,7 +72,7 @@ class Camera:
             #check if the requested decorated frame will be updated
             update_decorated =  frame_ind % self.frame_processors[self.decorate_index - 1].stride == 0 #off by one so 0 can indicate no processing
         if update_decorated or self.decorate_index == 0:
-            self.decorated_frame = frame.copy()
+            decorated_frame = frame.copy()
 
         start_dims = self.frame.shape
         for i,p in enumerate(self.frame_processors):
@@ -87,17 +87,17 @@ class Camera:
                     'Processor {} modified frame channel from {} to {}'.format(type(p), start_dims, self.frame.shape)
             #if we are updating the decorated frame, then we must
             if(i < self.decorate_index and update_decorated):
-                self.decorated_frame = await p.decorate_frame(self.decorated_frame, self.decorate_name)
+                decorated_frame = await p.decorate_frame(decorated_frame, self.decorate_name)
 
                 # lots of steps, if we lose color channel add it back
-                if(len(self.decorated_frame.shape) == 2):
-                    self.decorated_frame = cv2.cvtColor(self.decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+                if(len(decorated_frame.shape) == 2):
+                    decorated_frame = cv2.cvtColor(decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
-                assert self.decorated_frame is not None, \
+                assert decorated_frame is not None, \
                     'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
 
 
-
+        self.decorated_frame = decorated_frame
         self.sem.release()
 
     def pause(self):

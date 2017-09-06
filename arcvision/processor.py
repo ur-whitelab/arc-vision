@@ -54,29 +54,26 @@ class ColorCalibrationProcessor(Processor):
     requires the spatial calibration to be done so that the coordinates can be
     transformed'''
 
-    def __init__(self, camera, projector_socket, grid_size=(8,8)):
-        super().__init__(camera, ['grid', 'modes'] ,1)
+    def __init__(self, camera, projector, grid_size=(8,8)):
+        super().__init__(camera, ['camera-grid', 'camera-modes', 'projector-grid', 'projector-modes'] ,1)
         self.grid_size = (8, 8)
-        self.sock = projector_socket
+        self.projector = projector
 
     async def process_frame(self, frame, frame_ind):
 
         color_current = []
-        for color in self._iter_colors(frame):
+        for rect, color in self._iter_colors(frame):
             color_current.append(list(color))
-        color_current = np.array(color_current, np.uint8).reshape(-1, 3)
+        color_current_np = np.array(color_current, np.uint8).reshape(-1, 3)
 
-
-        await self.sock.send('{}-{}'.format(frame.shape[1], frame.shape[0]).encode())
-        jpg = np.fromstring(await self.sock.recv(), np.uint8)
-        img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
+        img = self.projector.frame
 
         color_target = []
-        for color in self._iter_colors(img):
+        for rect, color in self._iter_colors(img):
             color_target.append(list(color))
-        color_target = np.array(color_target, np.uint8).reshape(-1, 3)
+        color_target_np = np.array(color_target, np.uint8).reshape(-1, 3)
 
-        self._update_cap(color_target, color_current)
+        self._update_cap(color_target_np, color_current_np)
 
         return frame
 
@@ -111,15 +108,24 @@ class ColorCalibrationProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
 
+        mode = None
+        if name.split('-')[0] == 'projector':
+            frame = self.projector.frame
+            mode = name.split('-')[1]
+        elif name.split('-')[0] == 'camera':
+            mode = name.split('-')[1]
+
+
+
         for r,color in self._iter_colors(frame):
-            if name == 'modes':
+            if mode == 'modes':
                 draw_rectangle(frame, r, color, -1)
-            else:
+            if mode is not None:
                 draw_rectangle(frame, r, (0, 0, 0), 1)
-            cv2.putText(frame,
-                '{}'.format(color),
-                (r[0], r[1] + r[3] // 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
+                cv2.putText(frame,
+                    '{}'.format(color),
+                    (r[0] + 5, r[1] + r[3] // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
         return frame
 
 

@@ -11,6 +11,7 @@ from .server import start_server
 from .calibration import Calibrate
 from .processor import *
 from .utils import *
+from .projector import Projector
 import json
 
 from .protobufs.graph_pb2 import Graph
@@ -78,6 +79,7 @@ class Controller:
         print('Started arcvision server')
 
         self.crop_processor = CropProcessor(self.cam, crop)
+        self.projector = Projector(self.cam, self.projector_sock)
         #PreprocessProcessor(self.cam)
         self.processors = [BackgroundProcessor(self.cam)]
 
@@ -117,7 +119,7 @@ class Controller:
             elif mode == 'calibration':
                 self._reset_processors()
                 self.processors = [SpatialCalibrationProcessor(self.cam, self.background),
-                                   ColorCalibrationProcessor(self.cam)]
+                                   ColorCalibrationProcessor(self.cam, self.projector)]
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.img_db, self.descriptor, self.background)]
