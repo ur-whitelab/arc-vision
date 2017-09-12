@@ -40,11 +40,14 @@ class Camera:
         # could be mp4 file, so catch error
         try:
             #self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720)
-            #self.cap.set(cv2.CAP_PROP_FPS, 60)
+            self.cap.set(cv2.CAP_PROP_FPS, 60)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+            self.cap.set(cv2.CAP_PROP_HUE, 0.0)
+            self.cap.set(cv2.CAP_PROP_SATURATION, 64.0)
+            self.cap.set(cv2.CAP_PROP_GAIN, 0.0)
+
         except cv2.error:
             pass
 
@@ -90,14 +93,14 @@ class Camera:
                 decorated_frame = await p.decorate_frame(decorated_frame, self.decorate_name)
 
                 # lots of steps, if we lose color channel add it back
-                if(len(decorated_frame.shape) == 2):
-                    decorated_frame = cv2.cvtColor(decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+                #if(len(decorated_frame.shape) == 2):
+                #    decorated_frame = cv2.cvtColor(decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
                 assert decorated_frame is not None, \
                     'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
 
-
-        self.decorated_frame = decorated_frame
+        if update_decorated:
+            self.decorated_frame = decorated_frame
         self.sem.release()
 
     def pause(self):

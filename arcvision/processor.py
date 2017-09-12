@@ -462,7 +462,7 @@ class TrackerProcessor(Processor):
         return True
 
 class SegmentProcessor(Processor):
-    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None):
+    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[40, 100, 255]):
         '''Pass stride = -1 to only process on request'''
         super().__init__(camera, [
 
@@ -482,6 +482,22 @@ class SegmentProcessor(Processor):
         self.own_process = (stride != -1)
         self.channel = channel
 
+        if channel is not None:
+            # convert channel specification to an HSV value
+            color = [0, 0, 0]
+            color[channel] = 255
+            hsv = cv2.cvtColor(np.uint8(color).reshape(-1,1,3), cv2.COLOR_BGR2HSV).reshape(3)
+            # create an interval from that
+            h_min = (hsv[0] - hsv_delta[0]) % 255
+            h_max = (hsv[0] + hsv_delta[0]) % 255
+            #swap them in case of roll-over
+            h_min, h_max = min(h_min, h_max), max(h_min,h_max)
+            self.hsv_min = np.array([h_min, hsv[1] - hsv_delta[1], hsv[2] - hsv_delta[2]], np.uint8)
+            self.hsv_max = np.array([h_max, 255, 255], np.uint8)
+
+            print('range of color hsv', self.hsv_min, self.hsv_max)
+
+
     async def process_frame(self, frame, frame_ind):
         '''we only process on request'''
         if self.own_process:
@@ -499,11 +515,13 @@ class SegmentProcessor(Processor):
             self._process_frame(frame, 0)
         yield from self.rect_iter
 
+
     def _filter_background(self, frame, name = ''):
 
+        img = frame.copy()
         if(frame.shape == self.background.shape):
-            img = frame.copy()
             img -= self.background
+
         if name == 'background-subtract':
             return img
         gray = img
@@ -511,7 +529,7 @@ class SegmentProcessor(Processor):
             if len(img.shape) == 3 and img.shape[2] == 3:
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         else:
-            gray = img[:,:,self.channel]
+            gray = cv2.inRange(img, self.hsv_min, self.hsv_max)
         gray = cv2.blur(gray, (3,3))
         if name == 'background-filter-blur':
             return gray
@@ -525,10 +543,10 @@ class SegmentProcessor(Processor):
             return bg
         # noise removal
         kernel = np.ones((4,4),np.uint8)
-        bg = cv2.erode(bg, kernel, iterations = 3)
+        bg = cv2.erode(bg, kernel, iterations = 2)
         if name == 'background-erode':
             return bg
-        bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 3)
+        bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 1)
         if name == 'background-open':
             return bg
 

@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import asyncio
 
 from .processor import Processor
 
@@ -12,15 +13,19 @@ class Projector(Processor):
 
 
     async def process_frame(self, frame, frame_ind):
-        await self.sock.send('{}-{}'.format(frame.shape[1], frame.shape[0]).encode())
-        jpg = np.fromstring(await self.sock.recv(), np.uint8)
-        img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
-        self._frame = img
-        self._transformed_frame = img.copy()
-        for i in range(frame.shape[2]):
-            self._transformed_frame[:,:,i] = cv2.warpPerspective(self._transformed_frame[:,:,i],
-                                                                 self._transform,
-                                                                 frame.shape[1::-1])
+        try:
+            await asyncio.wait_for(self.sock.send('{}-{}'.format(frame.shape[1], frame.shape[0]).encode()), timeout=0.1)
+            response = await asyncio.wait_for(self.sock.recv(), timeout=0.1)
+            jpg = np.fromstring(response, np.uint8)
+            img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
+            self._frame = img
+            self._transformed_frame = img.copy()
+            for i in range(frame.shape[2]):
+                self._transformed_frame[:,:,i] = cv2.warpPerspective(self._transformed_frame[:,:,i],
+                                                                     self._transform,
+                                                                     frame.shape[1::-1])
+        except asyncio.TimeoutError:
+            print('Unable to connect to projector...')
         return frame
 
     async def decorate_frame(self, frame, name):
