@@ -134,7 +134,7 @@ class SpatialCalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
        to the projector coordinate system. Convergence in done by using point guess in next round with
        previous round estimate'''
-    def __init__(self, camera, background, channel=2, stride=1, N=16, delay=3, stay=5):
+    def __init__(self, camera, background=None, channel=2, stride=1, N=16, delay=3, stay=5):
         self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.05, channel=channel)
         super().__init__(camera, ['calibration', 'transform'], stride)
 
@@ -312,9 +312,7 @@ class BackgroundProcessor(Processor):
     '''Substracts and computes background'''
     def __init__(self, camera):
         super().__init__(camera, ['background-removal'], 1)
-        self.avg_background = None
-        self.count = 0
-        self.paused = False
+        self.reset()
 
     def get_background(self):
         if self.avg_background is None:
@@ -328,6 +326,10 @@ class BackgroundProcessor(Processor):
         self.paused = True
     def play(self):
         self.paused = False
+    def reset(self):
+        self.count = 0
+        self.avg_background = None
+        self.paused = False
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
@@ -339,7 +341,7 @@ class BackgroundProcessor(Processor):
         if not self.paused:
             self.avg_background += frame
             self.count += 1
-        return frame
+        return frame - self.get_background()
 
 
     async def decorate_frame(self, frame, name):
@@ -519,8 +521,8 @@ class SegmentProcessor(Processor):
     def _filter_background(self, frame, name = ''):
 
         img = frame.copy()
-        if(frame.shape == self.background.shape):
-            img -= self.background
+        #if(frame.shape == self.background.shape):
+        #    img -= self.background
 
         if name == 'background-subtract':
             return img

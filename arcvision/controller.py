@@ -78,9 +78,10 @@ class Controller:
         print('Started arcvision server')
 
         self.crop_processor = CropProcessor(self.cam, crop)
-        self.projector = Projector(self.cam, self.projector_sock)
-        #PreprocessProcessor(self.cam)
-        self.processors = [BackgroundProcessor(self.cam)]
+        self.projector_processor = Projector(self.cam, self.projector_sock)
+        #self.transform_processor = SpatialCalibrationProcessor(self.cam)
+        self.background_processor = BackgroundProcessor(self.cam)
+        self.processors = []
 
         await self.update_settings(self.settings)
 
@@ -89,14 +90,9 @@ class Controller:
             await self.update_loop()
 
     def _reset_processors(self):
-
-        for p in self.processors:
-            if p.__class__ == BackgroundProcessor:
-                bg = p.get_background()
-                if bg is not None:
-                    self.background = bg
         [x.close() for x in self.processors]
         self.processors = []
+        self.background_processor.pause()
 
     def _start_detection(self):
         self.processors = [DetectionProcessor(self.cam, self.background,
@@ -114,7 +110,7 @@ class Controller:
                 self._start_detection()
             elif mode == 'background':
                 self._reset_processors()
-                self.processors = [BackgroundProcessor(self.cam)]
+                self.background_processor.reset()
             elif mode == 'calibration':
                 self._reset_processors()
                 self.processors = [SpatialCalibrationProcessor(self.cam, self.background)]
@@ -136,10 +132,9 @@ class Controller:
         if 'action' in settings:
             action = settings['action']
             if action == 'complete_background' and self.settings['mode'] == 'background':
-                self.processors[0].pause()
+                self.background_processor.pause()
             if action == 'start_background' and self.settings['mode'] == 'background':
-                self._reset_processors()
-                self.processors = [BackgroundProcessor(self.cam)]
+                self.background_processor.reset()
             elif action == 'set_rect' and self.settings['mode'] == 'training':
                 self.processors[0].rect_index = int(settings['training_rect_index'])
             elif action == 'set_poly' and self.settings['mode'] == 'training':
@@ -245,12 +240,13 @@ class Controller:
             del self.vision_state.nodes[r]
 
         # now update
-        for o in self.processors[0].objects:
-            node = self.vision_state.nodes[o['id']]
-            node.position[:] = o['center_scaled']
-            node.label = o['label']
-            node.id = o['id']
-            node.delete = False
+        for p in self.processors:
+            for o in p.objects:
+                node = self.vision_state.nodes[o['id']]
+                node.position[:] = o['center_scaled']
+                node.label = o['label']
+                node.id = o['id']
+                node.delete = False
 
 
 def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, zmq_projector_port, cc_hostname, template_dir, crop):
