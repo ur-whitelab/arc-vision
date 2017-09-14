@@ -7,8 +7,10 @@ from numpy import linalg
 import matplotlib.pyplot as plt
 from .utils import *
 import scipy.stats as ss
+from multiprocessing import Process, Pipe, Lock
 
 _object_id = 0
+_sentinel = -1
 
 def object_id():
     global _object_id
@@ -16,12 +18,24 @@ def object_id():
     return _object_id
 
 class Processor:
-    def __init__(self, camera, streams, stride):
+    '''A camera processor'''
+    def __init__(self, camera, streams, stride, has_consumer=False):
 
         self.streams = streams
         self.stride = stride
         camera.add_frame_processor(self)
         self.camera = camera
+
+        #set-up offloaded thread and pipes for data
+        self.has_consumer = has_consumer
+        if has_consumer:
+            self._work_conn, p = Pipe(duplex=True)
+            self._lock = Lock()
+            self.consumer = Process(target=self._consume_work, args=(p,self._lock))
+            print('starting consumer thread....')
+            self.consumer.start()
+
+
 
     @property
     def objects(self):
@@ -29,6 +43,48 @@ class Processor:
 
     def close(self):
         self.camera.remove_frame_processor(self)
+        if self.has_conusmer:
+            self._work_conn.send(_sentinel)
+            self.consumer.join()
+
+    def _queue_work(self,data):
+        asyncio.ensure_future(self._await_work(data))
+
+
+    async def _await_work(self, data):
+        # apparently you cannot await Connection objects???
+        # also, there is some kind of buggy interaction when polling directlry
+        # use a lock instead
+        self._work_conn.send(data)
+        while not self._lock.acquire(False):
+            await asyncio.sleep(0) # do other things
+        sys.stdout.flush()
+        result = self._work_conn.recv()
+        self._receive_result(result)
+        self._lock.release()
+
+    def _receive_result(self, result):
+        '''override this to receive and process data which was porcessed via _process_work'''
+        pass
+
+
+    @classmethod
+    def _consume_work(cls, return_conn, lock):
+        '''This is the other thread main loop, which reads in data, handles the exit and calls _process_work'''
+        while True:
+            data = return_conn.recv()
+            if data == _sentinel:
+                break
+            result = cls._process_work(data)
+            lock.release()
+            return_conn.send(result)
+            lock.acquire()
+
+    @classmethod
+    def _process_work(cls, data):
+        '''Override this method to process data passed to queue_work in a different thread'''
+        pass
+
 
 
 class ProjectorProcessor(Processor):
@@ -313,14 +369,12 @@ class BackgroundProcessor(Processor):
     def __init__(self, camera):
         super().__init__(camera, ['background-removal'], 1)
         self.reset()
+        self.pause()
+        self._background = None
 
-    def get_background(self):
-        if self.avg_background is None:
-            return None
-        result = self.avg_background // self.count
-        result = result.astype(np.uint8)
-        result = cv2.blur(result, (5,5))
-        return result
+    @property
+    def background(self):
+        return self._background
 
     def pause(self):
         self.paused = True
@@ -337,15 +391,19 @@ class BackgroundProcessor(Processor):
         if self.avg_background is None:
             self.avg_background = np.empty(frame.shape, dtype=np.uint32)
             self.avg_background[:] = 0
+            self._background = self.avg_background
 
         if not self.paused:
             self.avg_background += frame
             self.count += 1
-        return frame - self.get_background()
+            self._background = self.avg_background // max(1, self.count)
+            self._background = self._background.astype(np.uint8)
+            self._background = cv2.blur(self._background, (5,5))
+        return frame - self._background
 
 
     async def decorate_frame(self, frame, name):
-        return frame - self.get_background()
+        return frame - self._background
 
 class TrackerProcessor(Processor):
 

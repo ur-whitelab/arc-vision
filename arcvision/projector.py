@@ -4,26 +4,26 @@ import asyncio
 
 from .processor import Processor
 
+
+
 class Projector(Processor):
     '''This will handle retrieving and caching the frame displayed by the proejctor at each frame'''
     def __init__(self, camera, projector_socket):
-        super().__init__(camera, ['frame', 'transformed'], 1)
+        super().__init__(camera, ['frame', 'transformed'], 1, has_consumer=True)
         self.sock = projector_socket
         self._transform = np.identity(3)
+        self._transformed_frame = None
+        self._frame = None
 
 
     async def process_frame(self, frame, frame_ind):
+
+        shape = frame.shape
         try:
-            await asyncio.wait_for(self.sock.send('{}-{}'.format(frame.shape[1], frame.shape[0]).encode()), timeout=0.1)
-            response = await asyncio.wait_for(self.sock.recv(), timeout=0.1)
-            jpg = np.fromstring(response, np.uint8)
-            img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
-            self._frame = img
-            self._transformed_frame = img.copy()
-            for i in range(frame.shape[2]):
-                self._transformed_frame[:,:,i] = cv2.warpPerspective(self._transformed_frame[:,:,i],
-                                                                     self._transform,
-                                                                     frame.shape[1::-1])
+            await asyncio.wait_for(self.sock.send('{}-{}'.format(shape[1], shape[0]).encode()), timeout=0.02)
+            response = await asyncio.wait_for(self.sock.recv(), timeout=0.02)
+            self._queue_work( (response, self._transform, shape) )
+
         except asyncio.TimeoutError:
             print('Unable to connect to projector...')
         return frame
@@ -34,6 +34,22 @@ class Projector(Processor):
         elif name == 'transformed':
             return self.frame
         return frame
+
+
+    @classmethod
+    def _process_work(cls, data):
+        response, transform, shape = data
+        jpg = np.fromstring(response, np.uint8)
+        img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
+        t_img = img.copy()
+        for i in range(shape[2]):
+                t_img[:,:,i] = cv2.warpPerspective(t_img[:,:,i],
+                                                   transform,
+                                                   shape[1::-1])
+        return img, t_img
+
+    def _process_result(self, result):
+        self._frame, self._transformed_frame = result
 
     @property
     def transform(self):

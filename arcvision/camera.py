@@ -70,7 +70,8 @@ class Camera:
     async def _process_frame(self, frame, frame_ind):
         '''Process the frames. We only update the decorated frame when necessary'''
 
-        update_decorated = False
+        # we will udpate if we are at raw always
+        update_decorated = self.decorate_index == 0
         if self.decorate_index > 0:
             #check if the requested decorated frame will be updated
             update_decorated =  frame_ind % self.frame_processors[self.decorate_index - 1].stride == 0 #off by one so 0 can indicate no processing
@@ -96,8 +97,9 @@ class Camera:
                 #if(len(decorated_frame.shape) == 2):
                 #    decorated_frame = cv2.cvtColor(decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
-                assert decorated_frame is not None, \
+                if decorated_frame is not None:
                     'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
+                    decorate_frame = frame
 
         if update_decorated:
             self.decorated_frame = decorated_frame

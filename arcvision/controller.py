@@ -12,6 +12,7 @@ from .processor import *
 from .utils import *
 from .projector import Projector
 import json
+from multiprocessing import freeze_support
 
 from .protobufs.graph_pb2 import Graph
 
@@ -257,6 +258,9 @@ def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, zmq_projector_
 
 
 def main():
+
+    freeze_support()
+
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('--video-filename', help='location of video or empty for webcam', default='', dest='video_filename')
     parser.add_argument('--server-port', help='port to run server', default='8888', dest='server_port')
@@ -266,12 +270,18 @@ def main():
     parser.add_argument('--zmq-pub-port', help='port for publishing my zmq updates', default=2400, dest='zmq_pub_port')
     parser.add_argument('--template-include', help='directory containing template images', dest='template_dir', required=True)
     parser.add_argument('--crop', help='two x,y points defining crop', dest='crop', nargs=4)
+    parser.add_argument('--debug', help='enable async debugging tools', action='store_true')
 
     args = parser.parse_args()
     if args.crop is not None:
         crop = [int(c) for c in args.crop]
     else:
         crop = None
+    if args.debug:
+        asyncio.get_event_loop().set_debug(True)
+        import logging
+        logging.getLogger('asyncio').setLevel(logging.DEBUG)
+
     init(args.video_filename,
          args.server_port,
          args.zmq_sub_port,
