@@ -43,7 +43,7 @@ class Processor:
 
     def close(self):
         self.camera.remove_frame_processor(self)
-        if self.has_conusmer:
+        if self.has_consumer:
             self._work_conn.send(_sentinel)
             self.consumer.join()
 
@@ -58,7 +58,6 @@ class Processor:
         self._work_conn.send(data)
         while not self._lock.acquire(False):
             await asyncio.sleep(0) # do other things
-        sys.stdout.flush()
         result = self._work_conn.recv()
         self._receive_result(result)
         self._lock.release()
@@ -84,24 +83,6 @@ class Processor:
     def _process_work(cls, data):
         '''Override this method to process data passed to queue_work in a different thread'''
         pass
-
-
-
-class ProjectorProcessor(Processor):
-    def __init__(self, camera, projector_socket):
-        super().__init__(camera, ['subtraction'], 1)
-        self.sock = projector_socket
-        self.current = 0
-
-    async def process_frame(self, frame, frame_ind):
-        await self.sock.send('{}-{}'.format(frame.shape[1], frame.shape[0]).encode())
-        jpg = np.fromstring(await self.sock.recv(), np.uint8)
-        img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
-        self.current = img
-        return frame
-
-    async def decorate_frame(self, frame, name):
-        return frame - self.current
 
 
 class ColorCalibrationProcessor(Processor):
@@ -205,34 +186,37 @@ class SpatialCalibrationProcessor(Processor):
         self.index = 0
         self.delay = delay
         self.stay = stay
-        self.points = np.zeros( (N, 2) )
-        self.counts = np.zeros( (N, 1) )
         self.N = N
         self.first = True
         self.channel = channel
-
-        self._transform = np.identity(3)
-        self._scaled_transform = np.identity(3)
-        self._best_scaled_transform = np.identity(3)
-        self._best_fit = np.inf
-        self.fit = 100
-
-        self.calibrate = True
+        self.reset()
 
     def close(self):
         super().close()
         self.segmenter.close()
 
+    def play(self):
+        self.calibrate = True
+
+    def pause(self):
+        self.calibrate = False
+
+    def reset(self):
+        self.points = np.zeros( (self.N, 2) )
+        self.counts = np.zeros( (self.N, 1) )
+        self._transform = np.identity(3)
+        self._scaled_transform = np.identity(3)
+        self._best_scaled_transform = np.identity(3)
+        self._best_fit = np.inf
+        self._best_list = [1, 0, 0, 0, 1, 0]
+        self.fit = 100
+
+        self.calibrate = False
+
 
     async def process_frame(self, frame, frame_ind):
         if self.calibrate:
             self._calibrate(frame, frame_ind)
-
-        for i in range(frame.shape[2]):
-            frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
-                                            self._best_scaled_transform,
-                                            frame.shape[1::-1])
-
         return frame
 
     def _calibrate(self, frame, frame_ind):
@@ -257,6 +241,20 @@ class SpatialCalibrationProcessor(Processor):
                 self.counts[:] = max(0, (0.01 - self.fit) * 10)
             self.index += 1
             self.index %= self.N
+
+    def warp_img(self, img):
+        for i in range(img.shape[2]):
+            img[:,:,i] = cv2.warpPerspective(img[:,:,i],
+                                            self._best_scaled_transform,
+                                            img.shape[1::-1])
+        return img
+
+    def warp_point(self, point):
+        x = point[0] * self._best_list[0] + point[1] * self._best_list[1] + self._best_list[2]
+        y = point[0] * self._best_list[3] + point[1] * self._best_list[4] + self._best_list[5]
+        point[0] = x
+        point[1] = y
+        return point
 
 
     def _update_homography(self, frame):
@@ -289,20 +287,19 @@ class SpatialCalibrationProcessor(Processor):
         if self.fit < self._best_fit:
             self._best_scaled_transform = self._scaled_transform
             self._best_fit = self.fit
+            self._best_list = linalg.inv(self._transform).reshape(-1)
+            print(self._best_list)
 
     def _unscale(self, array, shape):
         return (array * [shape[1], shape[0]]).astype(np.int32)
 
     async def decorate_frame(self, frame, name):
         if name == 'transform':
-            for i in range(frame.shape[2]):
-                frame[:,:,i] = cv2.warpPerspective(frame[:,:,i],
-                                                     self._scaled_transform,
-                                                     frame.shape[1::-1])
+            self.warp_img(frame)
         if name == 'calibration' or name == 'transform':
             for i in range(self.N):
                 p = self.calibration_points[i, :]
-                c = cv2.perspectiveTransform(p.reshape(-1, 1, 2), linalg.inv(self._transform)).reshape(2)
+                c = self.warp_point(p)
                 c = self._unscale(c, frame.shape)
                 cv2.circle(frame,
                             tuple(self._unscale(self.points[i],
@@ -316,7 +313,7 @@ class SpatialCalibrationProcessor(Processor):
             c = cv2.perspectiveTransform(p, linalg.inv(self._transform))
             c = self._unscale(c, frame.shape)
             cv2.polylines(frame, [c], True, (0, 255, 125), 4)
-        cv2.putText(frame,
+            cv2.putText(frame,
                 'Homography Fit: {}'.format(self.fit),
                 (100, 250),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,124,255))

@@ -48,7 +48,7 @@ class Projector(Processor):
                                                    shape[1::-1])
         return img, t_img
 
-    def _process_result(self, result):
+    def _receive_result(self, result):
         self._frame, self._transformed_frame = result
 
     @property

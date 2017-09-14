@@ -79,9 +79,9 @@ class Controller:
         print('Started arcvision server')
 
         self.crop_processor = CropProcessor(self.cam, crop)
+        #self.background_processor = BackgroundProcessor(self.cam)
         self.projector_processor = Projector(self.cam, self.projector_sock)
-        #self.transform_processor = SpatialCalibrationProcessor(self.cam)
-        self.background_processor = BackgroundProcessor(self.cam)
+        self.transform_processor = SpatialCalibrationProcessor(self.cam)
         self.processors = []
 
         await self.update_settings(self.settings)
@@ -94,6 +94,7 @@ class Controller:
         [x.close() for x in self.processors]
         self.processors = []
         self.background_processor.pause()
+        self.transform_processor.pause()
 
     def _start_detection(self):
         self.processors = [DetectionProcessor(self.cam, self.background,
@@ -114,7 +115,8 @@ class Controller:
                 self.background_processor.reset()
             elif mode == 'calibration':
                 self._reset_processors()
-                self.processors = [SpatialCalibrationProcessor(self.cam, self.background)]
+                self.transform_processor.reset()
+                self.transform_processor.play()
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.img_db, self.descriptor, self.background)]
@@ -244,7 +246,7 @@ class Controller:
         for p in self.processors:
             for o in p.objects:
                 node = self.vision_state.nodes[o['id']]
-                node.position[:] = o['center_scaled']
+                node.position[:] = self.transform_processor.warp_point(o['center_scaled'])
                 node.label = o['label']
                 node.id = o['id']
                 node.delete = False
