@@ -54,11 +54,12 @@ class Controller:
         self.modes = ['background',
                       'detection',
                       'training',
-                      'extent',
+                      'colors',
                       'calibration']
         self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
         self.descriptor = cv2.BRISK_create()
         self.processors = []
+        self.reserved_processors = 0
         self.background = None
 
     def get_state_json(self):
@@ -79,9 +80,10 @@ class Controller:
         print('Started arcvision server')
 
         self.crop_processor = CropProcessor(self.cam, crop)
-        #self.background_processor = BackgroundProcessor(self.cam)
+        self.background_processor = BackgroundProcessor(self.cam)
         self.projector_processor = Projector(self.cam, self.projector_sock)
         self.transform_processor = SpatialCalibrationProcessor(self.cam)
+        self.reserved_processors = [self.transform_processor]
         self.processors = []
 
         await self.update_settings(self.settings)
@@ -123,6 +125,10 @@ class Controller:
             elif mode == 'extent':
                 self._reset_processors()
                 self.processors = [SegmentProcessor(self.cam, self.background, 16, 1, 1)]
+            elif mode == 'colors':
+                self._reset_processors()
+                self.processors = [ColorCalibrationProcessor(self.cam, self.projector_processor, (1,1))]
+
             # notify that our mode changed
             await self.pub_sock.send_multipart(['vision-mode'.encode(), mode.encode()])
 
@@ -243,13 +249,18 @@ class Controller:
             del self.vision_state.nodes[r]
 
         # now update
-        for p in self.processors:
+        for p in self.processors + self.reserved_processors:
             for o in p.objects:
                 node = self.vision_state.nodes[o['id']]
-                node.position[:] = self.transform_processor.warp_point(o['center_scaled'])
+                # don't transform while calibrating, otherwise it interferes
+                if not self.transform_processor.calibrate:
+                    node.position[:] = self.transform_processor.warp_point(o['center_scaled'])
+                else:
+                    node.position[:] = o['center_scaled']
                 node.label = o['label']
                 node.id = o['id']
                 node.delete = False
+
 
 
 def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, zmq_projector_port, cc_hostname, template_dir, crop):

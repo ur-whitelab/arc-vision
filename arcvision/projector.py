@@ -25,7 +25,7 @@ class Projector(Processor):
             self._queue_work( (response, self._transform, shape) )
 
         except asyncio.TimeoutError:
-            print('Unable to connect to projector...')
+            pass
         return frame
 
     async def decorate_frame(self, frame, name):

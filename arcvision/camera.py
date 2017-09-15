@@ -12,7 +12,7 @@ import time
 
 class Camera:
     '''Class for managing processing video frames'''
-    def __init__(self, video_file=-1, frame_buffer=10):
+    def __init__(self, video_file=-1, frame_buffer=1):
 
         if video_file == '':
             video_file = 0

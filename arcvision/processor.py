@@ -93,7 +93,7 @@ class ColorCalibrationProcessor(Processor):
 
     def __init__(self, camera, projector, grid_size=(8,8)):
         super().__init__(camera, ['camera-grid', 'camera-modes', 'projector-grid', 'projector-modes'] ,1)
-        self.grid_size = (8, 8)
+        self.grid_size = grid_size
         self.projector = projector
 
     async def process_frame(self, frame, frame_ind):
@@ -136,11 +136,13 @@ class ColorCalibrationProcessor(Processor):
         hsv_target = cv2.cvtColor(np.uint8(color_target).reshape(-1,1,3), cv2.COLOR_BGR2HSV)
 
         ratio = hsv_target.reshape(-1, 3) / hsv_current.reshape(-1, 3)
-        avg_ratio = np.mean(ratio, axis=0).reshape(3)
+        avg_ratio = np.clip(np.mean(ratio, axis=0).reshape(3), 0.9, 1.1)
 
-        self.camera.cap.set(cv2.CAP_PROP_HUE, avg_ratio[0])
-        self.camera.cap.set(cv2.CAP_PROP_SATURATION, avg_ratio[0])
-        self.camera.cap.set(cv2.CAP_PROP_GAIN, avg_ratio[0])
+        print('Camera moving from ', self.camera.cap.get(cv2.CAP_PROP_HUE), self.camera.cap.get(cv2.CAP_PROP_SATURATION), self.camera.cap.get(cv2.CAP_PROP_GAIN))
+        self.camera.cap.set(cv2.CAP_PROP_HUE, avg_ratio[0] * self.camera.cap.get(cv2.CAP_PROP_HUE))
+        self.camera.cap.set(cv2.CAP_PROP_SATURATION, avg_ratio[0] * self.camera.cap.get(cv2.CAP_PROP_SATURATION))
+        self.camera.cap.set(cv2.CAP_PROP_GAIN, avg_ratio[0] * self.camera.cap.get(cv2.CAP_PROP_GAIN))
+        print('To ', self.camera.cap.get(cv2.CAP_PROP_HUE), self.camera.cap.get(cv2.CAP_PROP_SATURATION), self.camera.cap.get(cv2.CAP_PROP_GAIN))
 
 
     async def decorate_frame(self, frame, name):
@@ -207,7 +209,7 @@ class SpatialCalibrationProcessor(Processor):
         self._transform = np.identity(3)
         self._scaled_transform = np.identity(3)
         self._best_scaled_transform = np.identity(3)
-        self._best_fit = np.inf
+        self._best_fit = 0.01 #reasonable amount, anything less shouldn't be used
         self._best_list = [1, 0, 0, 0, 1, 0]
         self.fit = 100
 
@@ -321,8 +323,10 @@ class SpatialCalibrationProcessor(Processor):
 
     @property
     def objects(self):
-        self._objects[0]['center_scaled'] = self.calibration_points[self.index]
-        return self._objects
+        if self.calibrate:
+            self._objects[0]['center_scaled'] = self.calibration_points[self.index]
+            return self._objects
+        return []
 
 class CropProcessor(Processor):
     '''Class that detects multiple objects given a set of labels and images'''
@@ -388,7 +392,7 @@ class BackgroundProcessor(Processor):
         if self.avg_background is None:
             self.avg_background = np.empty(frame.shape, dtype=np.uint32)
             self.avg_background[:] = 0
-            self._background = self.avg_background
+            self._background = frame.copy()
 
         if not self.paused:
             self.avg_background += frame
@@ -396,11 +400,11 @@ class BackgroundProcessor(Processor):
             self._background = self.avg_background // max(1, self.count)
             self._background = self._background.astype(np.uint8)
             self._background = cv2.blur(self._background, (5,5))
-        return frame - self._background
+        return frame# - self._background
 
 
     async def decorate_frame(self, frame, name):
-        return frame - self._background
+        return frame# - self._background
 
 class TrackerProcessor(Processor):
 
@@ -549,7 +553,7 @@ class SegmentProcessor(Processor):
             h_max = (hsv[0] + hsv_delta[0]) % 255
             #swap them in case of roll-over
             h_min, h_max = min(h_min, h_max), max(h_min,h_max)
-            self.hsv_min = np.array([h_min, hsv[1] - hsv_delta[1], hsv[2] - hsv_delta[2]], np.uint8)
+            self.hsv_min = np.array([h_min, hsv[1] - hsv_delta[1], hsv_delta[2]], np.uint8)
             self.hsv_max = np.array([h_max, 255, 255], np.uint8)
 
             print('range of color hsv', self.hsv_min, self.hsv_max)
