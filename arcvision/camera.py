@@ -44,9 +44,9 @@ class Camera:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720)
             self.cap.set(cv2.CAP_PROP_FPS, 60)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-            self.cap.set(cv2.CAP_PROP_HUE, 0.0)
+            self.cap.set(cv2.CAP_PROP_HUE, 1.0)
             self.cap.set(cv2.CAP_PROP_SATURATION, 64.0)
-            self.cap.set(cv2.CAP_PROP_GAIN, 0.0)
+            self.cap.set(cv2.CAP_PROP_GAIN, 1.0)
 
         except cv2.error:
             pass

@@ -136,12 +136,18 @@ class ColorCalibrationProcessor(Processor):
         hsv_target = cv2.cvtColor(np.uint8(color_target).reshape(-1,1,3), cv2.COLOR_BGR2HSV)
 
         ratio = hsv_target.reshape(-1, 3) / hsv_current.reshape(-1, 3)
-        avg_ratio = np.clip(np.mean(ratio, axis=0).reshape(3), 0.9, 1.1)
+        avg_ratio = np.clip(np.mean(ratio, axis=0).reshape(3), 0.5, 2)
 
+        print('Camera sees ')
+        print(hsv_current)
+        print('Projector sees ')
+        print(hsv_target)
+        print('Clipped ratio is ')
+        print(avg_ratio)
         print('Camera moving from ', self.camera.cap.get(cv2.CAP_PROP_HUE), self.camera.cap.get(cv2.CAP_PROP_SATURATION), self.camera.cap.get(cv2.CAP_PROP_GAIN))
-        self.camera.cap.set(cv2.CAP_PROP_HUE, avg_ratio[0] * self.camera.cap.get(cv2.CAP_PROP_HUE))
-        self.camera.cap.set(cv2.CAP_PROP_SATURATION, avg_ratio[0] * self.camera.cap.get(cv2.CAP_PROP_SATURATION))
-        self.camera.cap.set(cv2.CAP_PROP_GAIN, avg_ratio[0] * self.camera.cap.get(cv2.CAP_PROP_GAIN))
+        self.camera.cap.set(cv2.CAP_PROP_HUE, round(avg_ratio[0] * max(1, self.camera.cap.get(cv2.CAP_PROP_HUE))))
+        self.camera.cap.set(cv2.CAP_PROP_SATURATION, round(avg_ratio[1] * self.camera.cap.get(cv2.CAP_PROP_SATURATION)))
+        self.camera.cap.set(cv2.CAP_PROP_GAIN, round(avg_ratio[2] * max(1, self.camera.cap.get(cv2.CAP_PROP_GAIN))))
         print('To ', self.camera.cap.get(cv2.CAP_PROP_HUE), self.camera.cap.get(cv2.CAP_PROP_SATURATION), self.camera.cap.get(cv2.CAP_PROP_GAIN))
 
 
