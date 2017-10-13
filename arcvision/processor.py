@@ -244,11 +244,11 @@ class SpatialCalibrationProcessor(Processor):
     def _calibrate(self, frame, frame_ind):
         if frame_ind % (self.stay + self.delay) > self.delay:
             for seg in self.segmenter.segments(frame):
-                if(rect_color_channel(frame, seg) == self.channel):
-                    p = rect_scaled_center(seg, frame)
-                    self.points[self.index, :] = self.points[self.index, :] * self.counts[self.index] / (self.counts[self.index] + 1) + p / (self.counts[self.index] + 1)
-                    self.counts[self.index] += 1
-                    break
+                #if(rect_color_channel(frame, seg) == self.channel):
+                p = rect_scaled_center(seg, frame)
+                self.points[self.index, :] = self.points[self.index, :] * self.counts[self.index] / (self.counts[self.index] + 1) + p / (self.counts[self.index] + 1)
+                self.counts[self.index] += 1
+                break
 
 
         if frame_ind % (self.stay + self.delay) == 0:

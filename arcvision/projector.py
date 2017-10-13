@@ -41,13 +41,13 @@ class Projector(Processor):
         response, transform, shape = data
         jpg = np.fromstring(response, np.uint8)
         img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
+        img = np.flip(img, 0)
         t_img = img.copy()
-        print('warpping with ')
-        print(transform)
         for i in range(shape[2]):
                 t_img[:,:,i] = cv2.warpPerspective(t_img[:,:,i],
                                                    transform,
                                                    shape[1::-1])
+        t_img = cv2.blur(t_img, (3, 3))
         return img, t_img
 
     def _receive_result(self, result):
