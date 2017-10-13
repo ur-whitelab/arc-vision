@@ -26,14 +26,20 @@ class Projector(Processor):
 
         except asyncio.TimeoutError:
             pass
-        return frame
+        if self._frame is not None:
+            return np.maximum(self._transformed_frame, frame) - self._transformed_frame
+        else:
+            return frame
 
     async def decorate_frame(self, frame, name):
         if name =='frame':
             return self._frame
         elif name == 'transformed':
             return np.maximum(self._transformed_frame, frame) - self._transformed_frame
-        return frame
+        if self._frame is not None:
+            return np.maximum(self._transformed_frame, frame) - self._transformed_frame
+        else:
+            return frame
 
 
     @classmethod
@@ -47,7 +53,7 @@ class Projector(Processor):
                 t_img[:,:,i] = cv2.warpPerspective(t_img[:,:,i],
                                                    transform,
                                                    shape[1::-1])
-        t_img = cv2.blur(t_img, (3, 3))
+        #t_img = cv2.blur(t_img, (3, 3))
         return img, t_img
 
     def _receive_result(self, result):
