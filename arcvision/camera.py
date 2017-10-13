@@ -45,8 +45,8 @@ class Camera:
             self.cap.set(cv2.CAP_PROP_FPS, 60)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
             self.cap.set(cv2.CAP_PROP_HUE, 1.0)
-            self.cap.set(cv2.CAP_PROP_SATURATION, 64.0)
-            self.cap.set(cv2.CAP_PROP_GAIN, 1.0)
+            self.cap.set(cv2.CAP_PROP_SATURATION, 225.0)
+            self.cap.set(cv2.CAP_PROP_GAIN, 120.0)
 
         except cv2.error:
             pass
@@ -56,12 +56,12 @@ class Camera:
         assert hasattr(p, 'process_frame')
         assert hasattr(p, 'decorate_frame')
         self.frame_processors.append(p)
-        self.stream_names[p.__class__.__name__] = p.streams
+        self.stream_names[p.name] = p.streams
 
     def remove_frame_processor(self, p):
         '''Remove a frame processor object from being updated'''
         self.frame_processors.remove(p)
-        del self.stream_names[p.__class__.__name__]
+        del self.stream_names[p.name]
 
         # I'm a simple man
         self.decorate_index = min(len(self.frame_processors), self.decorate_index)

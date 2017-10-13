@@ -59,7 +59,7 @@ class Controller:
         self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
         self.descriptor = cv2.BRISK_create()
         self.processors = []
-        self.reserved_processors = 0
+        self.reserved_processors = []
         self.background = None
 
     def get_state_json(self):
@@ -97,6 +97,7 @@ class Controller:
         self.processors = []
         self.background_processor.pause()
         self.transform_processor.pause()
+        self.projector_processor.transform = self.transform_processor.inv_transform
 
     def _start_detection(self):
         self.processors = [DetectionProcessor(self.cam, self.background,

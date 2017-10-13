@@ -32,7 +32,7 @@ class Projector(Processor):
         if name =='frame':
             return self._frame
         elif name == 'transformed':
-            return self.frame
+            return np.maximum(self._transformed_frame, frame) - self._transformed_frame
         return frame
 
 
@@ -42,6 +42,8 @@ class Projector(Processor):
         jpg = np.fromstring(response, np.uint8)
         img = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
         t_img = img.copy()
+        print('warpping with ')
+        print(transform)
         for i in range(shape[2]):
                 t_img[:,:,i] = cv2.warpPerspective(t_img[:,:,i],
                                                    transform,
@@ -56,7 +58,7 @@ class Projector(Processor):
         return self._transform
 
     @transform.setter
-    def tranform(self, value):
+    def transform(self, value):
         self._transform = value
 
     @property

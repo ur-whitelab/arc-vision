@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from .utils import *
 import scipy.stats as ss
 from multiprocessing import Process, Pipe, Lock
+import traceback
 
 _object_id = 0
 _sentinel = -1
@@ -19,9 +20,13 @@ def object_id():
 
 class Processor:
     '''A camera processor'''
-    def __init__(self, camera, streams, stride, has_consumer=False):
+    def __init__(self, camera, streams, stride, has_consumer=False, name=None):
 
         self.streams = streams
+        if name is None:
+            self.name = self.__class__.__name__
+        else:
+            self.name = name
         self.stride = stride
         camera.add_frame_processor(self)
         self.camera = camera
@@ -42,6 +47,7 @@ class Processor:
         return []
 
     def close(self):
+        print('Closing ' + self.__class__.__name__)
         self.camera.remove_frame_processor(self)
         if self.has_consumer:
             self._work_conn.send(_sentinel)
@@ -179,8 +185,8 @@ class SpatialCalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
        to the projector coordinate system. Convergence in done by using point guess in next round with
        previous round estimate'''
-    def __init__(self, camera, background=None, channel=2, stride=1, N=16, delay=3, stay=5):
-        self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.05, channel=channel)
+    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=3, stay=5):
+        self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.05, channel=channel, name='SpatialSegmenter')
         super().__init__(camera, ['calibration', 'transform'], stride)
 
         self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
@@ -198,6 +204,14 @@ class SpatialCalibrationProcessor(Processor):
         self.first = True
         self.channel = channel
         self.reset()
+
+    @property
+    def transform(self):
+        return self._best_scaled_transform
+
+    @property
+    def inv_transform(self):
+        return linalg.inv(self._best_scaled_transform)
 
     def close(self):
         super().close()
@@ -306,7 +320,7 @@ class SpatialCalibrationProcessor(Processor):
             self.warp_img(frame)
         if name == 'calibration' or name == 'transform':
             for i in range(self.N):
-                p = self.calibration_points[i, :]
+                p = np.copy(self.calibration_points[i, :])
                 c = self.warp_point(p)
                 c = self._unscale(c, frame.shape)
                 cv2.circle(frame,
@@ -406,11 +420,14 @@ class BackgroundProcessor(Processor):
             self._background = self.avg_background // max(1, self.count)
             self._background = self._background.astype(np.uint8)
             self._background = cv2.blur(self._background, (5,5))
-        return frame# - self._background
+        #do max to protect against underflow
+        #return np.minimum(frame - self._background, frame)
+        return frame
 
 
     async def decorate_frame(self, frame, name):
-        return frame# - self._background
+        #return np.minimum(frame - self._background, frame)
+        return frame
 
 class TrackerProcessor(Processor):
 
@@ -529,7 +546,7 @@ class TrackerProcessor(Processor):
         return True
 
 class SegmentProcessor(Processor):
-    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[40, 100, 255]):
+    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[180, 130, 16], name=None):
         '''Pass stride = -1 to only process on request'''
         super().__init__(camera, [
 
@@ -541,7 +558,7 @@ class SegmentProcessor(Processor):
                                   'distance',
                                   'boxes',
                                   'watershed'
-                                  ], max(1, stride))
+                                  ], max(1, stride), name=name)
         self.rect_iter = range(0)
         self.background = background
         self.max_segments = max_segments
@@ -555,14 +572,14 @@ class SegmentProcessor(Processor):
             color[channel] = 255
             hsv = cv2.cvtColor(np.uint8(color).reshape(-1,1,3), cv2.COLOR_BGR2HSV).reshape(3)
             # create an interval from that
-            h_min = (hsv[0] - hsv_delta[0]) % 255
-            h_max = (hsv[0] + hsv_delta[0]) % 255
+            h_min = max(0, hsv[0] - hsv_delta[0])
+            h_max = min(255, hsv[0] + hsv_delta[0])
             #swap them in case of roll-over
-            h_min, h_max = min(h_min, h_max), max(h_min,h_max)
-            self.hsv_min = np.array([h_min, hsv[1] - hsv_delta[1], hsv_delta[2]], np.uint8)
+            #h_min, h_max = min(h_min, h_max), max(h_min,h_max)
+            self.hsv_min = np.array([h_min, max(0,hsv[1] - hsv_delta[1]), hsv_delta[2]], np.uint8)
             self.hsv_max = np.array([h_max, 255, 255], np.uint8)
 
-            print('range of color hsv', self.hsv_min, self.hsv_max)
+            print('range of color hsv', self.hsv_min, hsv, self.hsv_max)
 
 
     async def process_frame(self, frame, frame_ind):
