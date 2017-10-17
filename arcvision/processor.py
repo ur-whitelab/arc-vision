@@ -309,7 +309,7 @@ class SpatialCalibrationProcessor(Processor):
         if self.fit < self._best_fit:
             self._best_scaled_transform = self._scaled_transform
             self._best_fit = self.fit
-            self._best_list = linalg.inv(self._transform).reshape(-1)
+            self._best_list = (self._transform).flatten()
             print(self._best_list)
 
     def _unscale(self, array, shape):
@@ -546,7 +546,7 @@ class TrackerProcessor(Processor):
         return True
 
 class SegmentProcessor(Processor):
-    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[180, 130, 16], name=None):
+    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 100, 16], name=None):
         '''Pass stride = -1 to only process on request'''
         super().__init__(camera, [
 
