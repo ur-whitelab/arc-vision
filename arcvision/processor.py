@@ -230,7 +230,8 @@ class SpatialCalibrationProcessor(Processor):
         self._scaled_transform = np.identity(3)
         self._best_scaled_transform = np.identity(3)
         self._best_fit = 0.01 #reasonable amount, anything less shouldn't be used
-        self._best_list = [1, 0, 0, 0, 1, 0]
+        self._best_list = [1, 0, 0, 0, 1, 0, 0, 0 ,1]
+        self._best_inv_list = [1, 0, 0, 0, 1, 0, 0, 0, 1]
         self.fit = 100
 
         self.calibrate = False
@@ -259,7 +260,7 @@ class SpatialCalibrationProcessor(Processor):
                 print(self._transform)
                 self.calibration_points = np.random.random( (self.N, 2)) * 0.8 + 0.1
                 #seed next round with fit, weighted by how well the homography fit
-                self.points[:] = cv2.perspectiveTransform(self.calibration_points.reshape(-1,1,2), self._transform)).reshape(-1,2)
+                self.points[:] = cv2.perspectiveTransform(self.calibration_points.reshape(-1,1,2), linalg.inv(self._transform)).reshape(-1,2)
                 self.counts[:] = max(0, (0.01 - self.fit) * 10)
             self.index += 1
             self.index %= self.N
@@ -272,12 +273,28 @@ class SpatialCalibrationProcessor(Processor):
         return img
 
     def warp_point(self, point):
+        w = point[0]* self._best_list[6] + point[1] * self._best_list[7] + self._best_list[8]
         x = point[0] * self._best_list[0] + point[1] * self._best_list[1] + self._best_list[2]
         y = point[0] * self._best_list[3] + point[1] * self._best_list[4] + self._best_list[5]
-        point[0] = x
-        point[1] = y
+        if (w != 0):
+            point[0] = x/w
+            point[1] = y/w
+        else:
+            point[0] = x
+            point[1] = y
         return point
+    def unwarp_point(self, point):
+        w = point[0]* self._best_inv_list[6] + point[1] * self._best_inv_list[7] + self._best_inv_list[8]
 
+        x = point[0] * self._best_inv_list[0] + point[1] * self._best_inv_list[1] + self._best_inv_list[2]
+        y = point[0] * self._best_inv_list[3] + point[1] * self._best_inv_list[4] + self._best_inv_list[5]
+        if (w != 0):
+            point[0] = x/w
+            point[1] = y/w
+        else:
+            point[0] = x
+            point[1] = y
+        return point
 
     def _update_homography(self, frame):
         if(np.sum(self.counts > 0) < 5):
@@ -302,14 +319,16 @@ class SpatialCalibrationProcessor(Processor):
                 self._scaled_transform = ts
                 self.first = True
             else:
-                self._transform = self._transform * 0.7 + t * 0.3
-                self._scaled_transform = self._scaled_transform * 0.7 + ts * 0.3
+                self._transform = self._transform * 0.6 + t * 0.4
+                self._scaled_transform = self._scaled_transform * 0.6 + ts * 0.4
+
         # get fit relative to identity
         self.fit = linalg.norm(self.calibration_points.reshape(-1, 1, 2) - cv2.perspectiveTransform((self.points).reshape(-1, 1, 2), self._transform)) / self.N
         if self.fit < self._best_fit:
             self._best_scaled_transform = self._scaled_transform
             self._best_fit = self.fit
             self._best_list = (self._transform).flatten()
+            self._best_inv_list = (linalg.inv(self._transform)).flatten()
             print(self._best_list)
 
     def _unscale(self, array, shape):
@@ -321,23 +340,34 @@ class SpatialCalibrationProcessor(Processor):
         if name == 'calibration' or name == 'transform':
             for i in range(self.N):
                 p = np.copy(self.calibration_points[i, :])
-                c = self.warp_point(p)
+
+                c = self.unwarp_point(p)
                 c = self._unscale(c, frame.shape)
+                #c = self.unwarp_point(p)
+                #c = self._unscale(c, frame.shape)
                 #BGR
+
+                # points represents the found location of the calibration circle (printed in red)
                 cv2.circle(frame,
                             tuple(self._unscale(self.points[i],
                                 frame.shape)), 10, (0,0,255), -1)
+
+                # c is the ground-truth location of the calibration circle, unwarped to be in CV space
+                # printed in blue. these should be close to the red points
                 cv2.circle(frame,
                             tuple(c.astype(np.int)), 10, (255,0,0), -1)
+
+                # calibration points
                 cv2.circle(frame,
                             tuple(self._unscale(self.calibration_points[i, :],
                                 frame.shape)), 10, (0,255, 255), -1)
                 cv2.line(frame, tuple(self._unscale(self.points[i],
                                 frame.shape)), tuple(c.astype(np.int)), (255,0,255))
-            p = np.array( [[0, 0], [0, 1], [1, 1], [1, 0]], np.float).reshape(-1, 1, 2)
-            c = cv2.perspectiveTransform(p, (self._transform))
-            c = self._unscale(c, frame.shape)
-            cv2.polylines(frame, [c], True, (0, 255, 125), 4)
+            # draw rectangle of the transform
+            p_rect = np.array( [[0, 0], [0, 1], [1, 1], [1, 0]], np.float).reshape(-1, 1, 2)
+            c_rect = cv2.perspectiveTransform(p_rect, (self._transform))
+            c_rect = self._unscale(c_rect, frame.shape)
+            cv2.polylines(frame, [c_rect], True, (0, 255, 125), 4)
             cv2.putText(frame,
                 'Homography Fit: {}'.format(self.fit),
                 (100, 250),
@@ -475,6 +505,9 @@ class TrackerProcessor(Processor):
 
         return frame
 
+    def _unscale(self, array, shape):
+        return (array * [shape[1], shape[0]]).astype(np.int32)
+
     async def decorate_frame(self, frame, name):
         if name != 'track':
             return frame
@@ -483,7 +516,11 @@ class TrackerProcessor(Processor):
                 continue
             bbox = t['bbox']
             draw_rectangle(frame, bbox, (0,0,255), 1)
-
+            center = t['center_scaled']
+            center_pos = np.array(center)
+            cv2.circle(frame,
+                            tuple(self._unscale(center_pos,
+                                frame.shape)), 10, (0,0, 255), -1)
             #now draw polygon
             cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
 
