@@ -259,7 +259,7 @@ class SpatialCalibrationProcessor(Processor):
                 print(self._transform)
                 self.calibration_points = np.random.random( (self.N, 2)) * 0.8 + 0.1
                 #seed next round with fit, weighted by how well the homography fit
-                self.points[:] = cv2.perspectiveTransform(self.calibration_points.reshape(-1,1,2), linalg.inv(self._transform)).reshape(-1,2)
+                self.points[:] = cv2.perspectiveTransform(self.calibration_points.reshape(-1,1,2), self._transform)).reshape(-1,2)
                 self.counts[:] = max(0, (0.01 - self.fit) * 10)
             self.index += 1
             self.index %= self.N
@@ -323,6 +323,7 @@ class SpatialCalibrationProcessor(Processor):
                 p = np.copy(self.calibration_points[i, :])
                 c = self.warp_point(p)
                 c = self._unscale(c, frame.shape)
+                #BGR
                 cv2.circle(frame,
                             tuple(self._unscale(self.points[i],
                                 frame.shape)), 10, (0,0,255), -1)
@@ -331,8 +332,10 @@ class SpatialCalibrationProcessor(Processor):
                 cv2.circle(frame,
                             tuple(self._unscale(self.calibration_points[i, :],
                                 frame.shape)), 10, (0,255, 255), -1)
+                cv2.line(frame, tuple(self._unscale(self.points[i],
+                                frame.shape)), tuple(c.astype(np.int)), (255,0,255))
             p = np.array( [[0, 0], [0, 1], [1, 1], [1, 0]], np.float).reshape(-1, 1, 2)
-            c = cv2.perspectiveTransform(p, linalg.inv(self._transform))
+            c = cv2.perspectiveTransform(p, (self._transform))
             c = self._unscale(c, frame.shape)
             cv2.polylines(frame, [c], True, (0, 255, 125), 4)
             cv2.putText(frame,
