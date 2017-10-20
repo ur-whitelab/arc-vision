@@ -5,7 +5,10 @@ import cv2
 import numpy as np
 from numpy import linalg
 import matplotlib.pyplot as plt
+# from utils import *
 from .utils import *
+
+import pickle
 import scipy.stats as ss
 from multiprocessing import Process, Pipe, Lock
 import traceback
@@ -185,10 +188,13 @@ class SpatialCalibrationProcessor(Processor):
     '''This will find a perspective transform that goes from our coordinate system
        to the projector coordinate system. Convergence in done by using point guess in next round with
        previous round estimate'''
-    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=3, stay=5):
+
+    ''' Const for the serialization file name '''
+    PICKLE_FILE = "spatialCalibrationData.pickle"
+
+    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=3, stay=3):
         self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.05, channel=channel, name='SpatialSegmenter')
         super().__init__(camera, ['calibration', 'transform'], stride)
-
         self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
 
         o = {}
@@ -214,6 +220,7 @@ class SpatialCalibrationProcessor(Processor):
         return linalg.inv(self._best_scaled_transform)
 
     def close(self):
+
         super().close()
         self.segmenter.close()
 
@@ -224,14 +231,15 @@ class SpatialCalibrationProcessor(Processor):
         self.calibrate = False
 
     def reset(self):
+        # check if serialized data exists before loading the transform as the identity
         self.points = np.zeros( (self.N, 2) )
         self.counts = np.zeros( (self.N, 1) )
         self._transform = np.identity(3)
         self._scaled_transform = np.identity(3)
         self._best_scaled_transform = np.identity(3)
         self._best_fit = 0.01 #reasonable amount, anything less shouldn't be used
-        self._best_list = [1, 0, 0, 0, 1, 0, 0, 0 ,1]
-        self._best_inv_list = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+        self._best_list = np.array([1., 0., 0., 0., 1., 0., 0., 0. ,1.])
+        self._best_inv_list = np.array([1., 0., 0., 0., 1., 0., 0., 0., 1.])
         self.fit = 100
 
         self.calibrate = False
@@ -266,10 +274,11 @@ class SpatialCalibrationProcessor(Processor):
             self.index %= self.N
 
     def warp_img(self, img):
-        for i in range(img.shape[2]):
-            img[:,:,i] = cv2.warpPerspective(img[:,:,i],
-                                            self._best_scaled_transform,
-                                            img.shape[1::-1])
+        return cv2.warpPerspective(img, self._best_scaled_transform, (img.shape[1], img.shape[0]))
+        # for i in range(img.shape[2]):
+        #     img[:,:,i] = cv2.warpPerspective(img[:,:,i],
+        #                                     self._best_scaled_transform,
+        #                                     img.shape[1::-1])
         return img
 
     def warp_point(self, point):
@@ -280,9 +289,10 @@ class SpatialCalibrationProcessor(Processor):
             point[0] = x/w
             point[1] = y/w
         else:
-            point[0] = x
-            point[1] = y
+            point[0] = 0
+            point[1] = 0
         return point
+
     def unwarp_point(self, point):
         w = point[0]* self._best_inv_list[6] + point[1] * self._best_inv_list[7] + self._best_inv_list[8]
 
@@ -292,8 +302,8 @@ class SpatialCalibrationProcessor(Processor):
             point[0] = x/w
             point[1] = y/w
         else:
-            point[0] = x
-            point[1] = y
+            point[0] = 0
+            point[1] = 0
         return point
 
     def _update_homography(self, frame):
@@ -317,7 +327,7 @@ class SpatialCalibrationProcessor(Processor):
             if(self.first):
                 self._transform = t
                 self._scaled_transform = ts
-                self.first = True
+                self.first = False
             else:
                 self._transform = self._transform * 0.6 + t * 0.4
                 self._scaled_transform = self._scaled_transform * 0.6 + ts * 0.4
@@ -343,8 +353,7 @@ class SpatialCalibrationProcessor(Processor):
 
                 c = self.unwarp_point(p)
                 c = self._unscale(c, frame.shape)
-                #c = self.unwarp_point(p)
-                #c = self._unscale(c, frame.shape)
+
                 #BGR
 
                 # points represents the found location of the calibration circle (printed in red)
@@ -353,7 +362,7 @@ class SpatialCalibrationProcessor(Processor):
                                 frame.shape)), 10, (0,0,255), -1)
 
                 # c is the ground-truth location of the calibration circle, unwarped to be in CV space
-                # printed in blue. these should be close to the red points
+                # printed in blue. these should be close to the red points if the fit is good
                 cv2.circle(frame,
                             tuple(c.astype(np.int)), 10, (255,0,0), -1)
 
@@ -361,6 +370,7 @@ class SpatialCalibrationProcessor(Processor):
                 cv2.circle(frame,
                             tuple(self._unscale(self.calibration_points[i, :],
                                 frame.shape)), 10, (0,255, 255), -1)
+                # draw a purple line between the corresponding red and blue dot to track distance
                 cv2.line(frame, tuple(self._unscale(self.points[i],
                                 frame.shape)), tuple(c.astype(np.int)), (255,0,255))
             # draw rectangle of the transform
@@ -466,7 +476,7 @@ class TrackerProcessor(Processor):
 
     @property
     def objects(self):
-        '''Objects should have a dictionary with center, bbbox, name, and id'''
+        '''Objects should have a dictionary with center, bbox, name, and id'''
         return self._tracking
 
 
@@ -518,9 +528,7 @@ class TrackerProcessor(Processor):
             draw_rectangle(frame, bbox, (0,0,255), 1)
             center = t['center_scaled']
             center_pos = np.array(center)
-            cv2.circle(frame,
-                            tuple(self._unscale(center_pos,
-                                frame.shape)), 10, (0,0, 255), -1)
+            cv2.circle(frame,tuple(self._unscale(center_pos,frame.shape)), 10, (0,0, 255), -1)
             #now draw polygon
             cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
 
@@ -533,7 +541,9 @@ class TrackerProcessor(Processor):
         return frame
 
     def track(self, frame, bbox, poly, label):
+        '''
 
+        '''
         if label in self.labels:
             self.labels[label] += 1
         else:
@@ -552,7 +562,8 @@ class TrackerProcessor(Processor):
                 # add to count
                 t['observed'] = self.ticks_per_obs
                 #update polygon and bounding box and very different
-                if intersection < 0.50:
+                if intersection < 0.55:
+                    print('Intersection is {}'.format(intersection))
                     t['poly'] = poly
                     t['init'] = bbox
                     t['delta'] = np.int32([0,0])
