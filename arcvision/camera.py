@@ -46,7 +46,7 @@ class Camera:
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
             self.cap.set(cv2.CAP_PROP_HUE, 1.0)
             self.cap.set(cv2.CAP_PROP_SATURATION, 225.0)
-            self.cap.set(cv2.CAP_PROP_GAIN, 120.0)
+            self.cap.set(cv2.CAP_PROP_GAIN, 2.0)
 
         except cv2.error:
             pass
@@ -70,7 +70,7 @@ class Camera:
     async def _process_frame(self, frame, frame_ind):
         '''Process the frames. We only update the decorated frame when necessary'''
 
-        # we will udpate if we are at raw always
+        # we will update if we are at raw always
         update_decorated = self.decorate_index == 0
         if self.decorate_index > 0:
             #check if the requested decorated frame will be updated
