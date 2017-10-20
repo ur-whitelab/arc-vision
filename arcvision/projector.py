@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 import asyncio
 
+# from processor import Processor
 from .processor import Processor
 
 
@@ -24,6 +25,7 @@ class Projector(Processor):
             response = await asyncio.wait_for(self.sock.recv(), timeout=0.02)
             self._queue_work( (response, self._transform, shape) )
 
+        #create the mask for the vision so we ignore projected images
         except asyncio.TimeoutError:
             pass
         if self._frame is not None:
@@ -32,6 +34,8 @@ class Projector(Processor):
             return frame
 
     async def decorate_frame(self, frame, name):
+        return frame
+        #display the masks, if present
         if name =='frame':
             return self._frame
         elif name == 'transformed':
