@@ -6,6 +6,11 @@ import asyncio
 import glob
 import os
 import sys
+# from camera import Camera
+# from server import start_server
+# from processor import *
+# from utils import *
+# from projector import Projector
 from .camera import Camera
 from .server import start_server
 from .processor import *
@@ -250,7 +255,12 @@ class Controller:
             del self.vision_state.nodes[r]
 
         # now update
-        for p in self.processors + self.reserved_processors:
+        if not self.transform_processor.calibrate:
+            processorsToUpdate = self.processors
+        else:
+            processorsToUpdate = self.processors + self.reserved_processors
+
+        for p in processorsToUpdate:
             for o in p.objects:
                 node = self.vision_state.nodes[o['id']]
                 # don't transform while calibrating, otherwise it interferes
