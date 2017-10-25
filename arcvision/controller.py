@@ -184,7 +184,7 @@ class Controller:
             desc = settings['descriptor']
             if desc == 'BRISK':
                 if settings['descriptor_threshold'] == 0:
-                    self.settings['descriptor_threshold'] = 30
+                    self.settings['descriptor_threshold'] = 20
                 else:
                     self.settings['descriptor_threshold'] = int(settings['descriptor_threshold'])
                 self.descriptor = cv2.BRISK_create(thresh=self.settings['descriptor_threshold'])

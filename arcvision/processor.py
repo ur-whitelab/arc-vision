@@ -3,6 +3,7 @@ import random
 import sys
 import cv2
 import numpy as np
+import time
 from numpy import linalg
 import matplotlib.pyplot as plt
 # from utils import *
@@ -74,7 +75,6 @@ class Processor:
     def _receive_result(self, result):
         '''override this to receive and process data which was porcessed via _process_work'''
         pass
-
 
     @classmethod
     def _consume_work(cls, return_conn, lock):
@@ -192,7 +192,10 @@ class SpatialCalibrationProcessor(Processor):
     ''' Const for the serialization file name '''
     PICKLE_FILE = "spatialCalibrationData.pickle"
 
-    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=3, stay=3):
+    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20):
+        #stay should be bigger than delay
+        #stay is how long the calibration dot stays in one place (?)
+        #delay is how long we wait before reading its position
         self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.05, channel=channel, name='SpatialSegmenter')
         super().__init__(camera, ['calibration', 'transform'], stride)
         self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
@@ -494,14 +497,30 @@ class TrackerProcessor(Processor):
         self.ticks += 1
         delete = []
         for i,t in enumerate(self._tracking):
+            start = time.time()
             status,bbox = t['tracker'].update(frame)
+            end = time.time()
+            #print('Updated bbox is {}, elapse time is {}'.format(bbox, end-start))
             t['observed'] -= 1
-            #update polygon
+            # we know our objects should stay the same size all of the time.
+            # check if the size dramatically changed.  if so, the object most likely was removed
+            # if not, rescale the tracked bbox to the correct size
             if(status):
-                t['delta'][0] = bbox[0] - t['init'][0]
-                t['delta'][1] = bbox[1] - t['init'][1]
-                t['bbox'] = bbox
-                t['center_scaled'] = rect_scaled_center(bbox, frame)
+                areaDiff = (rect_area(bbox) - t['area_init'])/t['area_init']
+                # experimental value: if the size has decreased by more than 15%, count that as a failed observation
+
+                # check if its new location is a reflection, or drastically far away
+                if (areaDiff <= -.15):
+                    t['observed'] -= 1
+                    #print("Area difference is {}, counting as null observation".format(areaDiff))
+                else:
+                    # rescale the bbox to match the original area?
+                    scaleFactor = t['area_init']/rect_area(bbox)
+                    bbox_p = stretch_rectangle(bbox, frame, scaleFactor)
+                    t['delta'][0] = bbox[0] - t['init'][0]
+                    t['delta'][1] = bbox[1] - t['init'][1]
+                    t['bbox'] = bbox_p
+                    t['center_scaled'] = rect_scaled_center(bbox_p, frame)
 
 
             # check obs counts
@@ -563,11 +582,14 @@ class TrackerProcessor(Processor):
                 t['observed'] = self.ticks_per_obs
                 #update polygon and bounding box and very different
                 if intersection < 0.55:
-                    print('Intersection is {}'.format(intersection))
+                    # reduce the size of the bbox by 5% so it has less of a chance of including the reactor image in its initial polygon
+                    scaled_center = rect_scaled_center(bbox,frame)
+                    bbox_p = stretch_rectangle(bbox, frame, .95)
+                    t['center_scaled'] = scaled_center
                     t['poly'] = poly
                     t['init'] = bbox
                     t['delta'] = np.int32([0,0])
-                    t['center_scaled'] = rect_scaled_center(bbox, frame)
+                    t['area_init'] = rect_area(bbox)
                     t['tracker'] = cv2.TrackerMedianFlow_create()
                     t['tracker'].init(frame, bbox)
                 return
@@ -587,6 +609,7 @@ class TrackerProcessor(Processor):
                      'label': label,
                      'poly': poly,
                      'init': bbox,
+                     'area_init':rect_area(bbox),
                      'center_scaled': rect_scaled_center(bbox, frame),
                      'bbox': bbox,
                      'observed': self.ticks_per_obs,
@@ -1084,3 +1107,8 @@ class DetectionProcessor(Processor):
             #cede control
             await asyncio.sleep(0)
         return features
+
+# class LineDetectionProcessor(Processor):
+#     ''' Detects drawn lines on an image of a certain color range '''
+#     def __init__(self, camera, stride):
+#         super().__init__(camera, ['image-segmented','lines-detected'])

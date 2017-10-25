@@ -82,10 +82,15 @@ class Camera:
         for i,p in enumerate(self.frame_processors):
             if frame_ind % p.stride == 0:
                 #process frame
+                startTime = time.time()
                 self.frame = await p.process_frame(frame, frame_ind)
+                endTime = time.time()
+                elp = endTime - startTime
+                #if (elp != 0.0):
+                    #print("Elapsed time using processor {} is {} seconds, frame index is {}".format(p.name, endTime - startTime, frame_ind))
 
                 assert frame is not None, \
-                    'Processer {} returned None on Process Frame {}'.format(type(p).__name__, self.frame_ind)
+                    'Processor {} returned None on Process Frame {}'.format(type(p).__name__, self.frame_ind)
 
                 assert len(self.frame.shape) == len(start_dims), \
                     'Processor {} modified frame channel from {} to {}'.format(type(p), start_dims, self.frame.shape)
@@ -112,7 +117,7 @@ class Camera:
         self.paused = True
 
         # try to read. If we fail, we re-use the last frame
-        # which could have processing artefacts. Best we can do though
+        # which could have processing artifacts. Best we can do though
         ret, frame = self.cap.read()
         if frame is not None:
             self.raw_frame = frame

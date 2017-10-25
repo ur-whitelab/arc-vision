@@ -120,6 +120,7 @@ def keypoints_view(desc, frame, rect):
     rect = stretch_rectangle(rect, frame)
 
     frame_view = rect_view(frame, rect)
+    #print("shape of frame_view: {}".format(frame_view.shape))
     kp, des = desc.detectAndCompute(frame_view,None)
     #need to transform the key points back
     for i in range(len(kp)):
@@ -146,6 +147,9 @@ def rect_scaled_center(rect, frame):
     x = (rect[0] + rect[2] / 2) / frame.shape[1]
     y = (rect[1] + rect[3] / 2) / frame.shape[0]
     return [x,y]
+
+def rect_area(rect):
+    return (abs(rect[0]- rect[2])* abs(rect[1] -rect[3]))
 
 def rect_color_channel(frame, rect):
     '''Returns which channel is maximum'''

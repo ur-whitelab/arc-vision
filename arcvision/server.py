@@ -53,8 +53,10 @@ class StreamHandler(tornado.web.RequestHandler):
                 return
             frame = self.camera.get_decorated_frame(stream_name)
             if frame is not None:
+                #print('Frame was not None!')
                 ret, jpeg = cv2.imencode('.jpg', frame)
             else:
+                print('Frame WAS None! Oh NO')
                 ret = False
             img = ''
             if ret:
@@ -113,6 +115,7 @@ class SettingsHandler(tornado.web.RequestHandler):
 
 
 def start_server(camera, controller, port=8888):
+
     app = tornado.web.Application([
         (r"/",HtmlPageHandler),
         (r"/stream/([a-z\-]+).mjpg", StreamHandler, {'camera': camera}),

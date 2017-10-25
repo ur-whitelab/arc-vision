@@ -8,7 +8,7 @@ from .processor import Processor
 
 
 class Projector(Processor):
-    '''This will handle retrieving and caching the frame displayed by the proejctor at each frame'''
+    '''This will handle retrieving and caching the frame displayed by the projector at each frame'''
     def __init__(self, camera, projector_socket):
         super().__init__(camera, ['frame', 'transformed'], 1, has_consumer=True)
         self.sock = projector_socket
@@ -18,7 +18,10 @@ class Projector(Processor):
 
 
     async def process_frame(self, frame, frame_ind):
-
+        if frame is not None:
+           return frame
+        else:
+           return self._frame
         shape = frame.shape
         try:
             await asyncio.wait_for(self.sock.send('{}-{}'.format(shape[1], shape[0]).encode()), timeout=0.02)
