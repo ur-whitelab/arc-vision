@@ -438,6 +438,7 @@ class BackgroundProcessor(Processor):
         self.reset()
         self.pause()
         self._background = None
+        self._blank = None
 
     @property
     def background(self):
@@ -459,6 +460,7 @@ class BackgroundProcessor(Processor):
             self.avg_background = np.empty(frame.shape, dtype=np.uint32)
             self.avg_background[:] = 0
             self._background = frame.copy()
+            self._blank = np.zeros((frame.shape))
 
         if not self.paused:
             self.avg_background += frame
@@ -467,12 +469,12 @@ class BackgroundProcessor(Processor):
             self._background = self._background.astype(np.uint8)
             self._background = cv2.blur(self._background, (5,5))
         #do max to protect against underflow
-        #return np.minimum(frame - self._background, frame)
+        #return np.maximum(frame - self._background, self._blank)
         return frame
 
 
     async def decorate_frame(self, frame, name):
-        #return np.minimum(frame - self._background, frame)
+        #return np.maximum(frame - self._background, self._blank)
         return frame
 
 class TrackerProcessor(Processor):
@@ -506,8 +508,8 @@ class TrackerProcessor(Processor):
             # check if the size dramatically changed.  if so, the object most likely was removed
             # if not, rescale the tracked bbox to the correct size
             if(status):
-                areaDiff = (rect_area(bbox) - t['area_init'])/t['area_init']
-                # experimental value: if the size has decreased by more than 15%, count that as a failed observation
+                areaDiff = abs(rect_area(bbox) - t['area_init'])/t['area_init']
+                # experimental value: if the size has changed by more than 15%, count that as a failed observation
 
                 # check if its new location is a reflection, or drastically far away
                 if (areaDiff <= -.15):
@@ -1108,7 +1110,110 @@ class DetectionProcessor(Processor):
             await asyncio.sleep(0)
         return features
 
-# class LineDetectionProcessor(Processor):
-#     ''' Detects drawn lines on an image of a certain color range '''
-#     def __init__(self, camera, stride):
-#         super().__init__(camera, ['image-segmented','lines-detected'])
+class LineDetectionProcessor(Processor):
+    ''' Detects drawn lines on an image (NB: works with a red marker or paper strip)
+        This will not return knowledge of connections between reactors (that logic should be in DetectionProcessor, which this class should be controlled by)
+    '''
+    def __init__(self, camera, stride, background):
+        super().__init__(camera, ['image-segmented','lines-detected'])
+        _lines = [] # initialize as an empty array - list of endpoints
+        _background = cv2.bilateralFilter(background, 7, 150, 150) # what should we do about eventual raster noise?
+
+    async def process_frame(self, frame, frame_ind):
+        if(self._ready):
+            #copy the frame into it so we don't have it processed by later methods
+            asyncio.ensure_future(self._detect_lines(frame.copy()))
+        return frame
+
+    async def decorate_frame(self, frame, name):
+
+        if name != 'image-segmented' or name != 'lines-detected':
+            return frame
+
+        if name == 'image-segmented':
+            return self.threshold_background(frame)
+
+        if name == 'lines-detected':
+            lines = self._detect_lines(frame)
+            # add purple points for each endpoint detected
+            for i in range(0,len(lines)):
+                cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
+                cv2.circle(frame, (lines[i][1][0], lines[i][1][1]), (255,0,255),-1)
+
+        return frame
+
+    '''
+    Use _detect_lines to get currently found lines, and compare to the previously found ones.  Adjust/add/remove from _lines property
+    '''
+    def detect_lines(self,frame):
+        new_lines = self.detect_lines(frame)
+        pass
+
+    ''' Detect lines using filtered contour detection on the output of threshold_background
+    '''
+    def _detect_lines(self,frame):
+        mask = self.threshold_background(frame)
+        lines = []
+        # detect contours on this mask
+        _, contours, _ = cv2.findContours(mask, 1,cv2.CHAIN_APPROX_SIMPLE)
+        if (contours is not None):
+            for i in range(0, len(contours)):
+                rect = cv2.minAreaRect(contours[i])
+                # rect is a Box2D struct containing (x,y) as the center of the box, (w,h) as the width and height, and theta as the rotation
+                area = rect[1][0]*rect[1][1]
+                minDim = min(rect[1]) # the thickness of the line - we want to throw out rectangles that are too big
+                maxDim = max(rect[1]) #corresponds to length - we want to throw out any noisy points that are too small
+                if (rect[1][0] != 0 and rect[1][1] != 0):
+                    aspectRatio = float(min(rect[1]))/max(rect[1])
+                else:
+                    aspectRatio = 100
+
+                # we want a thin object, so a small aspect ratio.
+                aspect_ratio_thresh = 0.3
+                area_thresh_upper = 20000
+                area_thresh_lower = 200
+                width_thresh = 25
+                length_thresh = 30
+                if (aspectRatio < aspect_ratio_thresh and area > area_thresh_lower and area < area_thresh_upper and minDim < width_thresh and maxDim > length_thresh):
+                    # only do vertex calculation if it is the correct shape
+                    endpoints = box_to_endpoints(rect)
+                    transpose_shape = np.flip(np.array(mask.shape),0)
+                    ep1_scaled = endpoints[0]/transpose_shape
+                    ep2_scaled = endpoints[1]/transpose_shape
+
+                    # only accept lines that are within the 10%-90% bounds of the frame
+                    ep1_within_bound = (min(ep1_scaled) > .1 and max(ep1_scaled) < .9)
+                    ep2_within_bound = (min(ep2_scaled) > .1 and max(ep2_scaled) < .9)
+                    if (ep1_within_bound and ep2_within_bound):
+                        lines.append()
+
+        return lines
+
+    '''
+        Run absDiff to subtract the background from the frame, then normalize over each color channel
+    '''
+    def absDiff_background(self,frame):
+        image_diff = cv2.absdiff(self._background, frame)
+        sum_diff = np.sum(image_diff, 2).astype(np.uint8)
+        sum_diff = cv2.medianBlur(sum_diff, 9)
+        return sum_diff
+
+    '''
+    Call absDiff_background, use a binary threshold to create a mask
+    '''
+    def threshold_background(self,frame):
+        sum_diff = self.absDiff_background(frame)
+        # threshold this value- play with thresh_val in prod
+        thresh_val = 20
+        _,mask = cv2.threshold(sum_diff, thresh_val, 255, cv2.THRESH_BINARY)
+        # apply a sharpening filter
+        kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+        mask = cv2.filter2D(mask,-1,kernel)
+        return mask
+
+    '''
+    Lazy implementation of finding endpoints of a bounding rectangle.  Find the vertices, use the lowest and its hypoteneuse
+    '''
+    def box_to_endpoints(rect):
+        box = np.int0(cv2.boxPoints(rect))
+        return (box[0],box[2])
