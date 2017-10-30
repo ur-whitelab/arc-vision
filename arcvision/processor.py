@@ -930,7 +930,7 @@ class DetectionProcessor(Processor):
     def __init__(self, camera, background, img_db, descriptor, stride=5,
                  threshold=0.8, template_size=256, min_match=6,
                  weights=[3, -1, -1, -10, 5], max_segments=10,
-                 track=True):
+                 track=True, detectLines = True):
 
         #we have a specific order required
         #set-up our tracker
@@ -939,6 +939,10 @@ class DetectionProcessor(Processor):
             self.tracker = TrackerProcessor(camera, stride * 2 * len(img_db))
         else:
             self.tracker = None
+
+        # # set up line detector
+        # if detectLines:
+        #     self.lineDetector = LineDetectionProcessor(camera,stride*2)
         #then our segmenter
         self.segmenter = SegmentProcessor(camera, background, -1, max_segments)
         #then us
@@ -1122,7 +1126,7 @@ class LineDetectionProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
             #copy the frame into it so we don't have it processed by later methods
-            asyncio.ensure_future(self._detect_lines(frame.copy()))
+            asyncio.ensure_future(self.detect_adjust_lines(frame.copy()))
         return frame
 
     async def decorate_frame(self, frame, name):
@@ -1145,8 +1149,9 @@ class LineDetectionProcessor(Processor):
     '''
     Use _detect_lines to get currently found lines, and compare to the previously found ones.  Adjust/add/remove from _lines property
     '''
-    def detect_lines(self,frame):
+    def detect_adjust_lines(self,frame):
         new_lines = self.detect_lines(frame)
+        self._lines = new_lines # TODO: logic to replace and adjust existing lines
         pass
 
     ''' Detect lines using filtered contour detection on the output of threshold_background
