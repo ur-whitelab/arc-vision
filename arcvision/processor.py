@@ -73,7 +73,7 @@ class Processor:
         self._lock.release()
 
     def _receive_result(self, result):
-        '''override this to receive and process data which was porcessed via _process_work'''
+        '''override this to receive and process data which was processed via _process_work'''
         pass
 
     @classmethod
@@ -1120,8 +1120,12 @@ class LineDetectionProcessor(Processor):
     '''
     def __init__(self, camera, stride, background):
         super().__init__(camera, ['image-segmented','lines-detected'])
-        _lines = [] # initialize as an empty array - list of endpoints
-        _background = cv2.bilateralFilter(background, 7, 150, 150) # what should we do about eventual raster noise?
+        self._lines = [] # initialize as an empty array - list of endpoints
+        self._background = cv2.bilateralFilter(background, 7, 150, 150) # preprocess the background image to help with raster noise
+
+    @property
+    def lines(self):
+        return self._lines
 
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
@@ -1138,20 +1142,24 @@ class LineDetectionProcessor(Processor):
             return self.threshold_background(frame)
 
         if name == 'lines-detected':
-            lines = self._detect_lines(frame)
             # add purple points for each endpoint detected
-            for i in range(0,len(lines)):
+            for i in range(0,len(self._lines)):
                 cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
                 cv2.circle(frame, (lines[i][1][0], lines[i][1][1]), (255,0,255),-1)
 
         return frame
 
+
     '''
     Use _detect_lines to get currently found lines, and compare to the previously found ones.  Adjust/add/remove from _lines property
     '''
     def detect_adjust_lines(self,frame):
-        new_lines = self.detect_lines(frame)
-        self._lines = new_lines # TODO: logic to replace and adjust existing lines
+        detected_lines = self.detect_lines(frame)
+        for i in range(0,len(detected_lines)):
+            (detectedSlope, detectedIntercept ) = line_from_endpoints(detected_lines[i][0], detected_lines[i][1])
+            # iterate through
+        self._lines = detected_lines # TODO: logic to replace and adjust existing lines
+        # if 2 lines , by means of extrapolation, are on the same fit/very close to it, they must be the same. take the longer one, since it is most likely that noise cut the image
         pass
 
     ''' Detect lines using filtered contour detection on the output of threshold_background
@@ -1190,7 +1198,7 @@ class LineDetectionProcessor(Processor):
                     ep1_within_bound = (min(ep1_scaled) > .1 and max(ep1_scaled) < .9)
                     ep2_within_bound = (min(ep2_scaled) > .1 and max(ep2_scaled) < .9)
                     if (ep1_within_bound and ep2_within_bound):
-                        lines.append()
+                        lines.append(endpoints)
 
         return lines
 
@@ -1222,3 +1230,9 @@ class LineDetectionProcessor(Processor):
     def box_to_endpoints(rect):
         box = np.int0(cv2.boxPoints(rect))
         return (box[0],box[2])
+
+    ''' Compute the slope and bias of a line function given 2 endpoints'''
+    def line_from_endpoints(endpoint1, endpoint2):
+        slope = (endpoint1[1] - endpoint2[1])/(endpoint1[0] - endpoint2[0])
+        intercept = endpoint1[1] - slope*endpoint1[0]
+        return (slope,intercept)
