@@ -261,9 +261,10 @@ class Controller:
         for r in remove:
             del self.vision_state.nodes[r]
 
-        # remove all previously found edges in reverse order
-        for i,e in reversed(list(enumerate(self.vision_state.edges))):
-            del self.vision_state.edges[i]
+        # remove all previously found edges
+        for i in range(len(self.vision_state.edges)):
+            del self.vision_state.edges[0]
+
         edgeIndex = 0
         # now update
         if not self.transform_processor.calibrate:
@@ -290,8 +291,10 @@ class Controller:
                         edge = self.vision_state.edges[edgeIndex]
                         edge.idA = o['id']
                         edge.labelA = o['label']
-                        edge.idB = o['connectedToPrimary'][i][0]
-                        edge.labelB = o['connectedToPrimary'][i][1]
+                        # the connections in connectedToPrimary is a list of tuples of the destination node, where the first is ID and second is label
+                        dstId,dstLabel = o['connectedToPrimary'][i]
+                        edge.idB = dstId
+                        edge.labelB = dstLabel
                         edgeIndex += 1
 
 
