@@ -261,12 +261,15 @@ class Controller:
         for r in remove:
             del self.vision_state.nodes[r]
 
+        # remove all previously found edges in reverse order
+        for i,e in reversed(list(enumerate(self.vision_state.edges))):
+            del self.vision_state.edges[i]
+        edgeIndex = 0
         # now update
         if not self.transform_processor.calibrate:
             processorsToUpdate = self.processors
         else:
             processorsToUpdate = self.processors + self.reserved_processors
-
         for p in processorsToUpdate:
             for o in p.objects:
                 node = self.vision_state.nodes[o['id']]
@@ -278,6 +281,19 @@ class Controller:
                 node.label = o['label']
                 node.id = o['id']
                 node.delete = False
+            # iterate through again, adding edges
+            for o in p.objects:
+                # check the number of connections this object is a primary for
+                if ('connectedToPrimary' in o):
+                    # there are connections
+                    for i in range(0,len(o['connectedToPrimary'])):
+                        edge = self.vision_state.edges[edgeIndex]
+                        edge.idA = o['id']
+                        edge.labelA = o['label']
+                        edge.idB = o['connectedToPrimary'][i][0]
+                        edge.labelB = o['connectedToPrimary'][i][1]
+                        edgeIndex += 1
+
 
 
 

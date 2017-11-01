@@ -580,11 +580,11 @@ class TrackerProcessor(Processor):
                             # if equal, use the y coordinate
                             if (center[0] > center2[0]) or (center[0] == center2[0] and center[1] < center2[1]):
                                 # first point is the primary
-                                t1['connectedToPrimary'].append(t2['name'])
-                                t2['connectedToSecondary'].append(t1['name'])
+                                t1['connectedToPrimary'].append((t2['id'], t2['label']))
+                                t2['connectedToSecondary'].append((t1['id'], t1['label'])) # secondary is ultimately not used in the protobuf, but it is useful to know for debug purposes
                             else:
-                                t2['connectedToPrimary'].append(t1['name'])
-                                t1['connectedToSecondary'].append(t2['name'])
+                                t2['connectedToPrimary'].append((t1['id'],t1['label']))
+                                t1['connectedToSecondary'].append((t2['id'],t2['label']))
 
                             print("{} is connected to {}".format(t1['name'], t2['name']))
                             # additionally, we should make sure that the line used to discern this connection is not used again
