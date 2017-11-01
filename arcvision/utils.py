@@ -5,6 +5,7 @@ import os
 import copy
 import hashlib
 import numpy as np
+import math
 
 
 class ImageDB:
@@ -154,3 +155,27 @@ def rect_area(rect):
 def rect_color_channel(frame, rect):
     '''Returns which channel is maximum'''
     return np.argmax(np.mean(rect_view(frame, rect), axis=(0,1)))
+
+def percentDiff(existingItem, newItem):
+    return float(newItem-existingItem)/existingItem
+
+'''
+Lazy implementation of finding endpoints of a bounding rectangle.  Find the vertices, use the lowest and its hypoteneuse
+'''
+def box_to_endpoints(rect):
+    box = np.int0(cv2.boxPoints(rect))
+    return (box[0],box[2])
+
+''' Compute the slope and bias of a line function given 2 endpoints'''
+def line_from_endpoints(endpoints):
+    endpoint1 = endpoints[0]
+    endpoint2 = endpoints[1]
+    slope = (endpoint1[1] - endpoint2[1])/(endpoint1[0] - endpoint2[0])
+    intercept = endpoint1[1] - slope*endpoint1[0]
+    return (slope,intercept)
+
+''' Calculate Euclidean distance between two endpoints '''
+def line_length(endpoints):
+    endpoint1 = endpoints[0]
+    endpoint2 = endpoints[1]
+    return math.sqrt(math.pow(endpoint1[0]-endpoint2[0],2) + math.pow(endpoint1[0]-endpoint2[0],2))

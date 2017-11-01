@@ -90,6 +90,13 @@ class Controller:
         self.transform_processor = SpatialCalibrationProcessor(self.cam)
         self.reserved_processors = [self.transform_processor]
         self.processors = []
+        # we're still in bootup mode, so a frame delay to collect the background won't hurt too bad
+        for i in range(0,100):
+            _,frame = self.cam.cap.read()
+            if (i == 0):
+                self.background = frame
+            else:
+                self.background = np.mean([frame, self.background], axis = 0).astype(np.uint8)
 
         await self.update_settings(self.settings)
 

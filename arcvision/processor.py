@@ -485,10 +485,17 @@ class TrackerProcessor(Processor):
         return self._tracking
 
 
-    def __init__(self, camera, detector_stride, delete_threshold_period=2.5, stride=1):
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=2.5, stride=1, detectLines = True):
         super().__init__(camera, ['track'], stride)
         self._tracking = []
         self.labels = {}
+
+        # set up line detector
+        if detectLines:
+             self.lineDetector = LineDetectionProcessor(camera,stride*2,background)
+        else:
+            self.lineDetector = None
+
         # need to keep our own ticks because
         # we don't know frame index when track() is called
         self.ticks = 0
@@ -499,10 +506,7 @@ class TrackerProcessor(Processor):
         self.ticks += 1
         delete = []
         for i,t in enumerate(self._tracking):
-            start = time.time()
             status,bbox = t['tracker'].update(frame)
-            end = time.time()
-            #print('Updated bbox is {}, elapse time is {}'.format(bbox, end-start))
             t['observed'] -= 1
             # we know our objects should stay the same size all of the time.
             # check if the size dramatically changed.  if so, the object most likely was removed
@@ -534,6 +538,8 @@ class TrackerProcessor(Processor):
             del self._tracking[i - offset]
             offset += 1
 
+        # use the detected lines to figure out connections, now that we have the updated locations of the items
+        # iterate through the lines, finding the tracked object that is closest to each endpoint
         return frame
 
     def _unscale(self, array, shape):
@@ -558,6 +564,13 @@ class TrackerProcessor(Processor):
                         '{}: {}'.format(t['name'], t['observed']),
                         (0, 60 * (i+ 1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
+
+        if (self.lineDetector is not None):
+            for i,line in enumerate(self.lineDetector.lines):
+                endpoints = line["endpoints"]
+                # place purple dots at each existing endpoint
+                cv2.circle(frame, (endpoints[0][0],endpoints[0][1]), 3 , (255,0,255), -1)
+                cv2.circle(frame, (endpoints[1][0],endpoints[1][1]), 3 , (255,0,255), -1)
 
         return frame
 
@@ -930,19 +943,17 @@ class DetectionProcessor(Processor):
     def __init__(self, camera, background, img_db, descriptor, stride=5,
                  threshold=0.8, template_size=256, min_match=6,
                  weights=[3, -1, -1, -10, 5], max_segments=10,
-                 track=True, detectLines = True):
+                 track=True):
 
         #we have a specific order required
         #set-up our tracker
         # give estimate of our stride
         if track:
-            self.tracker = TrackerProcessor(camera, stride * 2 * len(img_db))
+            self.tracker = TrackerProcessor(camera, stride * 2 * len(img_db), background)
         else:
             self.tracker = None
 
-        # # set up line detector
-        # if detectLines:
-        #     self.lineDetector = LineDetectionProcessor(camera,stride*2)
+
         #then our segmenter
         self.segmenter = SegmentProcessor(camera, background, -1, max_segments)
         #then us
@@ -1116,12 +1127,13 @@ class DetectionProcessor(Processor):
 
 class LineDetectionProcessor(Processor):
     ''' Detects drawn lines on an image (NB: works with a red marker or paper strip)
-        This will not return knowledge of connections between reactors (that logic should be in DetectionProcessor, which this class should be controlled by)
+        This will not return knowledge of connections between reactors (that logic should be in DetectionProcessor or TrackerProcessor, which this class should be controlled by)
     '''
     def __init__(self, camera, stride, background):
-        super().__init__(camera, ['image-segmented','lines-detected'])
-        self._lines = [] # initialize as an empty array - list of endpoints
+        super().__init__(camera, ['image-segmented','lines-detected'],stride)
+        self._lines = [] # initialize as an empty array - list of dicts that contain endpoints, slope, intercept
         self._background = cv2.bilateralFilter(background, 7, 150, 150) # preprocess the background image to help with raster noise
+        self._ready = True
 
     @property
     def lines(self):
@@ -1134,33 +1146,74 @@ class LineDetectionProcessor(Processor):
         return frame
 
     async def decorate_frame(self, frame, name):
-
         if name != 'image-segmented' or name != 'lines-detected':
             return frame
 
         if name == 'image-segmented':
-            return self.threshold_background(frame)
+            frame = self.threshold_background(frame)
+            return frame
 
-        if name == 'lines-detected':
-            # add purple points for each endpoint detected
-            for i in range(0,len(self._lines)):
-                cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
-                cv2.circle(frame, (lines[i][1][0], lines[i][1][1]), (255,0,255),-1)
+        # if name == 'lines-detected':
+        #     print("Adding the points")
+        # add purple points for each endpoint detected
+        for i in range(0,len(self._lines)):
+            cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
+            cv2.circle(frame, (lines[i][1][0], lines[i][1][1]), (255,0,255),-1)
 
         return frame
 
 
     '''
     Use _detect_lines to get currently found lines, and compare to the previously found ones.  Adjust/add/remove from _lines property
+    Should return nothing, but updates the lines property
     '''
-    def detect_adjust_lines(self,frame):
-        detected_lines = self.detect_lines(frame)
+    async def detect_adjust_lines(self,frame):
+        self._ready = False
+        detected_lines = self._detect_lines(frame)
+        # need a way to remove previous lines that were not found.
+        currentLines = self._lines
+        # empty out self._lines.
+        self._lines = []
+        for i in range(0,len(currentLines)):
+            # add/adjust a value that indicates if the current line was detected in this latest frame
+            currentLines[i]["detected"] = False
         for i in range(0,len(detected_lines)):
-            (detectedSlope, detectedIntercept ) = line_from_endpoints(detected_lines[i][0], detected_lines[i][1])
-            # iterate through
-        self._lines = detected_lines # TODO: logic to replace and adjust existing lines
-        # if 2 lines , by means of extrapolation, are on the same fit/very close to it, they must be the same. take the longer one, since it is most likely that noise cut the image
-        pass
+            detectedEndpoints = detected_lines[i]
+            (detectedSlope, detectedIntercept ) = line_from_endpoints(detectedEndpoints)
+            # iterate through existing lines - we should store their slope and intercept
+            similarLineUpdated = False
+
+            # if self._lines is empty, it should just add the new line
+            for j in range(0,len(currentLines)):
+                existingLine = currentLines[j]
+
+                currentSlope,currentIntercept = line_from_endpoints(existingLine["endpoints"])
+                if(abs(percentDiff(currentSlope,detectedSlope)) < 0.10 and abs(percentDiff(currentIntercept,detectedIntercept)) < .10):
+                    # easy way out - take the longer of the two lines. future implementations should check if they should be overlapped and take the longest line combination from them
+                    if (line_length(detectedEndpoints) > line_length(existingLine['endpoints'])):
+                        # replace with the new line
+                        currentLines[j] = {"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True}
+                    else:
+                        # update an existing line, so we know it was actually found
+                        currentLines[j]["detected"] = True
+                        # restart its countdown
+                    #however, at this stage, with whatever happens, we should stop iterating over existing lines
+                    similarLineUpdated = True
+                    break
+
+            if not similarLineUpdated:
+                currentLines.append({"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True})
+
+        # one last passthrough, only adding lines that were re-detected or new
+        for i in range(0,len(currentLines)):
+            lineDict = currentLines[i]
+            if (lineDict["detected"]):
+                self._lines.append(lineDict)
+                # the line was not observed.  decrement the countdown
+
+        self._ready = True
+
+
 
     ''' Detect lines using filtered contour detection on the output of threshold_background
     '''
@@ -1217,22 +1270,17 @@ class LineDetectionProcessor(Processor):
     def threshold_background(self,frame):
         sum_diff = self.absDiff_background(frame)
         # threshold this value- play with thresh_val in prod
-        thresh_val = 20
+        thresh_val = 40
         _,mask = cv2.threshold(sum_diff, thresh_val, 255, cv2.THRESH_BINARY)
         # apply a sharpening filter
         kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
         mask = cv2.filter2D(mask,-1,kernel)
         return mask
 
-    '''
-    Lazy implementation of finding endpoints of a bounding rectangle.  Find the vertices, use the lowest and its hypoteneuse
-    '''
-    def box_to_endpoints(rect):
-        box = np.int0(cv2.boxPoints(rect))
-        return (box[0],box[2])
-
-    ''' Compute the slope and bias of a line function given 2 endpoints'''
-    def line_from_endpoints(endpoint1, endpoint2):
-        slope = (endpoint1[1] - endpoint2[1])/(endpoint1[0] - endpoint2[0])
-        intercept = endpoint1[1] - slope*endpoint1[0]
-        return (slope,intercept)
+    def isLineSimilar(detectedEndpoints,currentEndpoints):
+        detectedSlope,detectedIntercept = line_from_endpoints(detectedEndpoints)
+        currentSlope,currentIntercept = line_from_endpoints(currentEndpoints)
+        if(math.abs(percentDiff(currentSlope,detectedSlope)) < 0.05 and math.abs(percentDiff(currentIntercept,detectedIntercept)) < .05):
+            return True
+        else:
+            return False
