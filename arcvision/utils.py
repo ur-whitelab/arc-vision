@@ -121,7 +121,6 @@ def keypoints_view(desc, frame, rect):
     rect = stretch_rectangle(rect, frame)
 
     frame_view = rect_view(frame, rect)
-    #print("shape of frame_view: {}".format(frame_view.shape))
     kp, des = desc.detectAndCompute(frame_view,None)
     #need to transform the key points back
     for i in range(len(kp)):
@@ -159,15 +158,15 @@ def rect_color_channel(frame, rect):
 def percentDiff(existingItem, newItem):
     return float(newItem-existingItem)/existingItem
 
-'''
-Lazy implementation of finding endpoints of a bounding rectangle.  Find the vertices, use the lowest and its hypoteneuse
-'''
+
 def box_to_endpoints(rect):
+    '''Lazy implementation of finding endpoints of a bounding rectangle.  Find the vertices, use the lowest and its hypoteneuse'''
     box = np.int0(cv2.boxPoints(rect))
     return (box[0],box[2])
 
-''' Compute the slope and bias of a line function given 2 endpoints'''
+
 def line_from_endpoints(endpoints):
+    ''' Compute the slope and bias of a line function given 2 endpoints'''
     endpoint1 = endpoints[0]
     endpoint2 = endpoints[1]
     slope = (endpoint1[1] - endpoint2[1])/(endpoint1[0] - endpoint2[0])
@@ -175,7 +174,7 @@ def line_from_endpoints(endpoints):
     return (slope,intercept)
 
 ''' Calculate Euclidean distance between two endpoints '''
-def line_length(endpoints):
+def distance_pts(endpoints):
     endpoint1 = endpoints[0]
     endpoint2 = endpoints[1]
     return math.sqrt(math.pow(endpoint1[0]-endpoint2[0],2) + math.pow(endpoint1[0]-endpoint2[0],2))

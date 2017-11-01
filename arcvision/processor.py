@@ -506,6 +506,7 @@ class TrackerProcessor(Processor):
         self.ticks += 1
         delete = []
         for i,t in enumerate(self._tracking):
+            t['connectedTo'] = []
             status,bbox = t['tracker'].update(frame)
             t['observed'] -= 1
             # we know our objects should stay the same size all of the time.
@@ -514,16 +515,16 @@ class TrackerProcessor(Processor):
             if(status):
                 areaDiff = abs(rect_area(bbox) - t['area_init'])/t['area_init']
                 # experimental value: if the size has changed by more than 15%, count that as a failed observation
-
+                dist = distance_pts(t['center_scaled'], rect_scaled_center(bbox))
                 # check if its new location is a reflection, or drastically far away
-                if (areaDiff <= -.15):
+                if (areaDiff <= -.15 or dist > .3):
                     t['observed'] -= 1
                     #print("Area difference is {}, counting as null observation".format(areaDiff))
                 else:
                     # rescale the bbox to match the original area?
                     scaleFactor = t['area_init']/rect_area(bbox)
                     bbox_p = stretch_rectangle(bbox, frame, scaleFactor)
-                    t['delta'][0] = bbox[0] - t['init'][0]
+                    t['delta'][0] = bbox[0] - t['init'][0] # we should use delta somewhere.
                     t['delta'][1] = bbox[1] - t['init'][1]
                     t['bbox'] = bbox_p
                     t['center_scaled'] = rect_scaled_center(bbox_p, frame)
@@ -538,9 +539,50 @@ class TrackerProcessor(Processor):
             del self._tracking[i - offset]
             offset += 1
 
-        # use the detected lines to figure out connections, now that we have the updated locations of the items
-        # iterate through the lines, finding the tracked object that is closest to each endpoint
+        #update _tracking with the connections each object has
+        self._connect_objects(frame.shape)
         return frame
+
+    def _connect_objects(self, frameSize):
+        if (self.lineDetector is None) or len(self._tracking) <= 1:
+            return
+        ''' Iterates through tracked objects and the detected lines, finding objects are connected. Updates self._tracking to have knowledge of connections'''
+        # NB: this will generate a non-directional representation of the connections between the objects.  directions should be created at the Controller level when creating the Graph
+        # in the future, this should be replaced by each processor creating its own Graph
+        dist_th = 20 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
+        used_lines = []
+        for i,t1 in enumerate(self._tracking):
+            center = self._unscale(t1['center_scaled'], frameSize)
+
+            # find all lines that have an endpoint near the center of this object
+            for k,line in self.lineDetector.lines:
+                if k in used_lines:
+                    continue # dont attempt to use this line if it is already associated with something
+                dist_ep1 = distance_pts(center, lines['endpoints'][0])
+                dist_ep2 = distance_pts(center, lines['endpoints'][1])
+                if (dist_ep1 < dist_th or dist_ep2 < dist_th):
+                    # we have a connection! use the endpoint that is greater to find another object thats close to it
+                    if (dist_ep1 <= dist_ep2):
+                        # use endpoint 2
+                        endpoint = lines['endpoints'][1]
+                    else:
+                        endpoint = lines['endpoints'][0]
+                    # iterate over all tracked objects again to see if the end of this line is close enough to any other object
+                    for j,t2 in enumerate(self._tracking):
+                        if (i == j):
+                            # don't attempt to find connections to yourself
+                            continue
+                        center2 = self._unscale(t2['center_scaled'], frameSize)
+                        if (distance_pts(center2, frameSize) < dist_th):
+                            # its a connection! list this one as a connection, then break out of this loop
+                            t1['connectedTo'].append(t2['name']) # for now, but we should
+                            t2['connectedTo'].append(t1['name'])
+                            print("{} is connected to {}".format(t1['name'], t2['name']))
+                            # additionally, we should make sure that the line used to discern this connection is not used again
+                            used_lines.append(k)
+                            break
+
+
 
     def _unscale(self, array, shape):
         return (array * [shape[1], shape[0]]).astype(np.int32)
@@ -565,6 +607,7 @@ class TrackerProcessor(Processor):
                         (0, 60 * (i+ 1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
 
+        # view lines, as the decorator for LineProcessor is not working
         if (self.lineDetector is not None):
             for i,line in enumerate(self.lineDetector.lines):
                 endpoints = line["endpoints"]
@@ -599,7 +642,7 @@ class TrackerProcessor(Processor):
                 if intersection < 0.55:
                     # reduce the size of the bbox by 5% so it has less of a chance of including the reactor image in its initial polygon
                     scaled_center = rect_scaled_center(bbox,frame)
-                    bbox_p = stretch_rectangle(bbox, frame, .95)
+                    #bbox_p = stretch_rectangle(bbox, frame, .95)
                     t['center_scaled'] = scaled_center
                     t['poly'] = poly
                     t['init'] = bbox
@@ -630,7 +673,8 @@ class TrackerProcessor(Processor):
                      'observed': self.ticks_per_obs,
                      'start': self.ticks,
                      'delta': np.int32([0,0]),
-                     'id': object_id()}
+                     'id': object_id(),
+                     'connectedTo': []}
         self._tracking.append(track_obj)
         return True
 
@@ -1129,11 +1173,12 @@ class LineDetectionProcessor(Processor):
     ''' Detects drawn lines on an image (NB: works with a red marker or paper strip)
         This will not return knowledge of connections between reactors (that logic should be in DetectionProcessor or TrackerProcessor, which this class should be controlled by)
     '''
-    def __init__(self, camera, stride, background):
+    def __init__(self, camera, stride, background, obsLimit = 5):
         super().__init__(camera, ['image-segmented','lines-detected'],stride)
         self._lines = [] # initialize as an empty array - list of dicts that contain endpoints, slope, intercept
         self._background = cv2.bilateralFilter(background, 7, 150, 150) # preprocess the background image to help with raster noise
         self._ready = True
+        self._observationLimit = obsLimit # how many calculations/countdowns until we remove a line
 
     @property
     def lines(self):
@@ -1188,29 +1233,34 @@ class LineDetectionProcessor(Processor):
                 existingLine = currentLines[j]
 
                 currentSlope,currentIntercept = line_from_endpoints(existingLine["endpoints"])
-                if(abs(percentDiff(currentSlope,detectedSlope)) < 0.10 and abs(percentDiff(currentIntercept,detectedIntercept)) < .10):
+                if(abs(percentDiff(currentSlope,detectedSlope)) < 0.10 and abs(percentDiff(currentIntercept,detectedIntercept)) < .15):
                     # easy way out - take the longer of the two lines. future implementations should check if they should be overlapped and take the longest line combination from them
-                    if (line_length(detectedEndpoints) > line_length(existingLine['endpoints'])):
+                    if (distance_pts(detectedEndpoints) > distance_pts(existingLine['endpoints'])):
                         # replace with the new line
-                        currentLines[j] = {"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True}
+                        currentLines[j] = {"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True, "observed":self._observationLimit}
                     else:
                         # update an existing line, so we know it was actually found
                         currentLines[j]["detected"] = True
                         # restart its countdown
+                        currentLines[j]["observed"] = self._observationLimit
                     #however, at this stage, with whatever happens, we should stop iterating over existing lines
                     similarLineUpdated = True
                     break
 
             if not similarLineUpdated:
-                currentLines.append({"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True})
+                currentLines.append({"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True, "observed":self._observationLimit})
 
         # one last passthrough, only adding lines that were re-detected or new
         for i in range(0,len(currentLines)):
             lineDict = currentLines[i]
             if (lineDict["detected"]):
                 self._lines.append(lineDict)
-                # the line was not observed.  decrement the countdown
 
+            else:
+                # the line was not observed.  decrement the countdown, and only add it into our tracked lines if the observed value is greater than 0
+                lineDict["observed"] -= 1
+                if (lineDict["observed"] > 0):
+                    self._lines.append(lineDict)
         self._ready = True
 
 
