@@ -506,7 +506,8 @@ class TrackerProcessor(Processor):
         self.ticks += 1
         delete = []
         for i,t in enumerate(self._tracking):
-            t['connectedTo'] = []
+            t['connectedToPrimary'] = [] # list of tracked objects it is connected to as the primary node
+            t['connectedToSecondary'] = []
             status,bbox = t['tracker'].update(frame)
             t['observed'] -= 1
             # we know our objects should stay the same size all of the time.
@@ -546,18 +547,16 @@ class TrackerProcessor(Processor):
     def _connect_objects(self, frameSize):
         if (self.lineDetector is None) or len(self._tracking) <= 1:
             return
-        ''' Iterates through tracked objects and the detected lines, finding objects are connected. Updates self._tracking to have knowledge of connections'''
-        # NB: this will generate a non-directional representation of the connections between the objects.  directions should be created at the Controller level when creating the Graph
-        # in the future, this should be replaced by each processor creating its own Graph
+        ''' Iterates through tracked objects and the detected lines, finding objects are connected. Updates self._tracking to have directional knowledge of connections'''
         dist_th = 20 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
         used_lines = []
         for i,t1 in enumerate(self._tracking):
             center = self._unscale(t1['center_scaled'], frameSize)
-
             # find all lines that have an endpoint near the center of this object
             for k,line in self.lineDetector.lines:
                 if k in used_lines:
                     continue # dont attempt to use this line if it is already associated with something
+
                 dist_ep1 = distance_pts(center, lines['endpoints'][0])
                 dist_ep2 = distance_pts(center, lines['endpoints'][1])
                 if (dist_ep1 < dist_th or dist_ep2 < dist_th):
@@ -572,11 +571,21 @@ class TrackerProcessor(Processor):
                         if (i == j):
                             # don't attempt to find connections to yourself
                             continue
+
                         center2 = self._unscale(t2['center_scaled'], frameSize)
                         if (distance_pts(center2, frameSize) < dist_th):
                             # its a connection! list this one as a connection, then break out of this loop
-                            t1['connectedTo'].append(t2['name']) # for now, but we should
-                            t2['connectedTo'].append(t1['name'])
+                            # we can create directionality by having two lists
+                            # figure out which one is further to the left by checking the which x coordinate is greater (counter-intuitive, but the camera view is flipped)
+                            # if equal, use the y coordinate
+                            if (center[0] > center2[0]) or (center[0] == center2[0] and center[1] < center2[1]):
+                                # first point is the primary
+                                t1['connectedToPrimary'].append(t2['name'])
+                                t2['connectedToSecondary'].append(t1['name'])
+                            else:
+                                t2['connectedToPrimary'].append(t1['name'])
+                                t1['connectedToSecondary'].append(t2['name'])
+
                             print("{} is connected to {}".format(t1['name'], t2['name']))
                             # additionally, we should make sure that the line used to discern this connection is not used again
                             used_lines.append(k)
