@@ -193,7 +193,7 @@ class SpatialCalibrationProcessor(Processor):
     ''' Const for the serialization file name '''
     PICKLE_FILE = ".\calibrationdata\spatialCalibrationData.p"
 
-    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20, writeOnPause = False, readAtInit = True):
+    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20, writeOnPause = True, readAtInit = True):
         #stay should be bigger than delay
         #stay is how long the calibration dot stays in one place (?)
         #delay is how long we wait before reading its position
@@ -234,8 +234,8 @@ class SpatialCalibrationProcessor(Processor):
         self.calibrate = True
 
     def pause(self):
-        # only write good fits
-        if (self.writeOnPause and self.fit < .001):
+        # only write good fits/better than the previously calculated one
+        if (self.writeOnPause and self.fit < .001 and self.fit < self.initial_fit):
             pickle.dump({"transform":self._transform, "scaled_transform":self._scaled_transform, "best_scaled_transform":self._best_scaled_transform, "best_list":self._best_list, "best_inv_list":self._best_inv_list, "fit":self.fit}, open(".\calibrationdata\spatialCalibrationData.p", "wb"))
         self.calibrate = False
 
@@ -256,6 +256,7 @@ class SpatialCalibrationProcessor(Processor):
             self._best_fit = 0.01
             self.calibrate = False
             self.first = False
+            self.initial_fit = self.fit
             return
         self.points = np.zeros( (self.N, 2) )
         self.counts = np.zeros( (self.N, 1) )
@@ -266,7 +267,7 @@ class SpatialCalibrationProcessor(Processor):
         self._best_list = np.array([1., 0., 0., 0., 1., 0., 0., 0. ,1.])
         self._best_inv_list = np.array([1., 0., 0., 0., 1., 0., 0., 0., 1.])
         self.fit = 100
-
+        self.initial_fit = self.fit
         self.calibrate = False
 
 
@@ -562,13 +563,13 @@ class TrackerProcessor(Processor):
                     t['observed'] -= 1
                     #print("Area difference is {}, counting as null observation".format(areaDiff))
                 else:
-                    print("Updated distance is {}".format(dist))
+                    #print("Updated distance is {}".format(dist))
                     # rescale the bbox to match the original area?
                     scaleFactor = t['area_init']/rect_area(bbox)
                     bbox_p = stretch_rectangle(bbox, frame, scaleFactor)
                     t['delta'][0] = bbox[0] - t['init'][0] # we should use delta somewhere.
                     t['delta'][1] = bbox[1] - t['init'][1]
-                    t['bbox'] = bbox_p
+                    t['bbox'] = bbox
                     t['center_scaled'] = rect_scaled_center(bbox_p, frame)
 
 
