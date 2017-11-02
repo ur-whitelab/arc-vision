@@ -3,6 +3,7 @@ import random
 import sys
 import cv2
 import numpy as np
+import os
 import time
 from numpy import linalg
 import matplotlib.pyplot as plt
@@ -190,9 +191,9 @@ class SpatialCalibrationProcessor(Processor):
        previous round estimate'''
 
     ''' Const for the serialization file name '''
-    PICKLE_FILE = "spatialCalibrationData.pickle"
+    PICKLE_FILE = ".\calibrationdata\spatialCalibrationData.p"
 
-    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20):
+    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20, writeOnPause = False, readAtInit = True):
         #stay should be bigger than delay
         #stay is how long the calibration dot stays in one place (?)
         #delay is how long we wait before reading its position
@@ -212,7 +213,10 @@ class SpatialCalibrationProcessor(Processor):
         self.N = N
         self.first = True
         self.channel = channel
+        self.writeOnPause = writeOnPause
+        self.readAtReset = readAtInit
         self.reset()
+        #self.reset()
 
     @property
     def transform(self):
@@ -223,7 +227,6 @@ class SpatialCalibrationProcessor(Processor):
         return linalg.inv(self._best_scaled_transform)
 
     def close(self):
-
         super().close()
         self.segmenter.close()
 
@@ -231,10 +234,29 @@ class SpatialCalibrationProcessor(Processor):
         self.calibrate = True
 
     def pause(self):
+        # only write good fits
+        if (self.writeOnPause and self.fit < .001):
+            pickle.dump({"transform":self._transform, "scaled_transform":self._scaled_transform, "best_scaled_transform":self._best_scaled_transform, "best_list":self._best_list, "best_inv_list":self._best_inv_list, "fit":self.fit}, open(".\calibrationdata\spatialCalibrationData.p", "wb"))
         self.calibrate = False
 
     def reset(self):
-        # check if serialized data exists before loading the transform as the identity
+        # read the pickle file
+        if(self.readAtReset and os.path.exists(".\calibrationdata\spatialCalibrationData.p")):
+            # check if serialized data exists before loading the transform as the identity
+            self.points = np.zeros( (self.N, 2) )
+            self.counts = np.zeros( (self.N, 1) )
+            data = pickle.load(open(".\calibrationdata\spatialCalibrationData.p", "rb"))
+            self.first = False
+            self._transform = data['transform']
+            self._scaled_transform = data['scaled_transform']
+            self._best_scaled_transform = data['best_scaled_transform']
+            self._best_list = data['best_list']
+            self._best_inv_list = data['best_inv_list']
+            self.fit = data['fit']
+            self._best_fit = 0.01
+            self.calibrate = False
+            self.first = False
+            return
         self.points = np.zeros( (self.N, 2) )
         self.counts = np.zeros( (self.N, 1) )
         self._transform = np.identity(3)
@@ -246,6 +268,21 @@ class SpatialCalibrationProcessor(Processor):
         self.fit = 100
 
         self.calibrate = False
+
+
+    # def reset(self):
+    #     # check if serialized data exists before loading the transform as the identity
+    #     self.points = np.zeros( (self.N, 2) )
+    #     self.counts = np.zeros( (self.N, 1) )
+    #     self._transform = np.identity(3)
+    #     self._scaled_transform = np.identity(3)
+    #     self._best_scaled_transform = np.identity(3)
+    #     self._best_fit = 0.01 #reasonable amount, anything less shouldn't be used
+    #     self._best_list = np.array([1., 0., 0., 0., 1., 0., 0., 0. ,1.])
+    #     self._best_inv_list = np.array([1., 0., 0., 0., 1., 0., 0., 0., 1.])
+    #     self.fit = 100
+
+    #     self.calibrate = False
 
 
     async def process_frame(self, frame, frame_ind):
@@ -455,7 +492,7 @@ class BackgroundProcessor(Processor):
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
-
+        return frame
         if self.avg_background is None:
             self.avg_background = np.empty(frame.shape, dtype=np.uint32)
             self.avg_background[:] = 0
@@ -516,12 +553,16 @@ class TrackerProcessor(Processor):
             if(status):
                 areaDiff = abs(rect_area(bbox) - t['area_init'])/t['area_init']
                 # experimental value: if the size has changed by more than 15%, count that as a failed observation
-                dist = distance_pts(t['center_scaled'], rect_scaled_center(bbox))
+                dist = distance_pts([t['center_scaled'],rect_scaled_center(bbox,frame)])
                 # check if its new location is a reflection, or drastically far away
-                if (areaDiff <= -.15 or dist > .3):
+                # if it moved some radical distance, reinitialize the tracker on the original frame
+                if (dist > 0.03):
+                    t['tracker'].init(frame, t['bbox'])
+                if (areaDiff <= -.15 or dist > .03):
                     t['observed'] -= 1
                     #print("Area difference is {}, counting as null observation".format(areaDiff))
                 else:
+                    print("Updated distance is {}".format(dist))
                     # rescale the bbox to match the original area?
                     scaleFactor = t['area_init']/rect_area(bbox)
                     bbox_p = stretch_rectangle(bbox, frame, scaleFactor)
@@ -545,35 +586,41 @@ class TrackerProcessor(Processor):
         return frame
 
     def _connect_objects(self, frameSize):
-        if (self.lineDetector is None) or len(self._tracking) <= 1:
+        if (self.lineDetector is None) or len(self._tracking) <= 1 or len(self.lineDetector.lines) == 0:
             return
         ''' Iterates through tracked objects and the detected lines, finding objects are connected. Updates self._tracking to have directional knowledge of connections'''
-        dist_th = 20 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
+        dist_th_upper = 200 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
+        dist_th_lower = 100 # to account for the size of the reactor
         used_lines = []
         for i,t1 in enumerate(self._tracking):
-            center = self._unscale(t1['center_scaled'], frameSize)
+            center = self._unscale_point(t1['center_scaled'], frameSize)
             # find all lines that have an endpoint near the center of this object
-            for k,line in self.lineDetector.lines:
+            for k,line in enumerate(self.lineDetector.lines):
                 if k in used_lines:
                     continue # dont attempt to use this line if it is already associated with something
 
-                dist_ep1 = distance_pts(center, lines['endpoints'][0])
-                dist_ep2 = distance_pts(center, lines['endpoints'][1])
-                if (dist_ep1 < dist_th or dist_ep2 < dist_th):
-                    # we have a connection! use the endpoint that is greater to find another object thats close to it
+                dist_ep1 = distance_pts((center, line['endpoints'][0]))
+                dist_ep2 = distance_pts((center, line['endpoints'][1]))
+                nearbyEndpointFound = False
+                if (val_in_range(dist_ep1,dist_th_lower,dist_th_upper) or val_in_range(dist_ep2,dist_th_lower,dist_th_upper)):
+                    # we have a connection! use the endpoint that is further away to find another object thats close to it
                     if (dist_ep1 <= dist_ep2):
                         # use endpoint 2
-                        endpoint = lines['endpoints'][1]
+                        endpoint = line['endpoints'][1]
                     else:
-                        endpoint = lines['endpoints'][0]
+                        endpoint = line['endpoints'][0]
                     # iterate over all tracked objects again to see if the end of this line is close enough to any other object
                     for j,t2 in enumerate(self._tracking):
                         if (i == j):
                             # don't attempt to find connections to yourself
                             continue
+                        # also don't attempt a connection if these two are already connected
+                        if (((t2['id'], t2['label']) in t1['connectedToPrimary']) or ((t2['id'], t2['label']) in t1['connectedToSecondary'])):
+                            continue
 
-                        center2 = self._unscale(t2['center_scaled'], frameSize)
-                        if (distance_pts(center2, frameSize) < dist_th):
+                        center2 = self._unscale_point(t2['center_scaled'], frameSize)
+                        dist2 = distance_pts((center2, frameSize))
+                        if (val_in_range(dist2, dist_th_lower,dist_th_upper)):
                             # its a connection! list this one as a connection, then break out of this loop
                             # we can create directionality by having two lists
                             # figure out which one is further to the left by checking the which x coordinate is greater (counter-intuitive, but the camera view is flipped)
@@ -581,18 +628,23 @@ class TrackerProcessor(Processor):
                             if (center[0] > center2[0]) or (center[0] == center2[0] and center[1] < center2[1]):
                                 # first point is the primary
                                 t1['connectedToPrimary'].append((t2['id'], t2['label']))
-                                t2['connectedToSecondary'].append((t1['id'], t1['label'])) # secondary is ultimately not used in the protobuf, but it is useful to know for debug purposes
+                                t2['connectedToSecondary'].append((t1['id'], t1['label'])) # secondary is ultimately not used in the protobuf/graph, but it is useful to know for debug purposes
                             else:
                                 t2['connectedToPrimary'].append((t1['id'],t1['label']))
                                 t1['connectedToSecondary'].append((t2['id'],t2['label']))
 
-                            print("{} is connected to {}".format(t1['name'], t2['name']))
-                            # additionally, we should make sure that the line used to discern this connection is not used again
+                            print("{} is connected to {}".format(t1['name'], t2['name'])) #debug message
+
+                            # make sure that the line used to discern this connection is not used again
                             used_lines.append(k)
                             break
 
+                else:
+                    pass
 
 
+    def _unscale_point(self,point,shape):
+        return (point[0]*shape[0], point[1]* shape[1])
     def _unscale(self, array, shape):
         return (array * [shape[1], shape[0]]).astype(np.int32)
 
@@ -628,7 +680,7 @@ class TrackerProcessor(Processor):
 
     def track(self, frame, bbox, poly, label):
         '''
-
+        Track a newly found object
         '''
         if label in self.labels:
             self.labels[label] += 1
@@ -688,7 +740,7 @@ class TrackerProcessor(Processor):
         return True
 
 class SegmentProcessor(Processor):
-    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 100, 16], name=None):
+    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 110, 16], name=None):
         '''Pass stride = -1 to only process on request'''
         super().__init__(camera, [
 
@@ -1306,9 +1358,9 @@ class LineDetectionProcessor(Processor):
                     ep1_scaled = endpoints[0]/transpose_shape
                     ep2_scaled = endpoints[1]/transpose_shape
 
-                    # only accept lines that are within the 10%-90% bounds of the frame
-                    ep1_within_bound = (min(ep1_scaled) > .1 and max(ep1_scaled) < .9)
-                    ep2_within_bound = (min(ep2_scaled) > .1 and max(ep2_scaled) < .9)
+                    # only accept lines that are within the 5%-95% bounds of the frame
+                    ep1_within_bound = (min(ep1_scaled) > .05 and max(ep1_scaled) < .95)
+                    ep2_within_bound = (min(ep2_scaled) > .05 and max(ep2_scaled) < .95)
                     if (ep1_within_bound and ep2_within_bound):
                         lines.append(endpoints)
 
