@@ -6,6 +6,7 @@ import asyncio
 import glob
 import os
 import sys
+import copy
 # from camera import Camera
 # from server import start_server
 # from processor import *
@@ -53,7 +54,7 @@ class Controller:
         self.settings = {'mode': 'background',
                          'pause': False,
                          'descriptor': 'BRISK',
-                         'descriptor_threshold': 25,
+                         'descriptor_threshold': 20,
                          'descriptor_threshold_bounds': (1,30),
                          'descriptor_threshold_step': 1}
         self.modes = ['background',
@@ -61,7 +62,7 @@ class Controller:
                       'training',
                       'colors',
                       'calibration']
-        self.descriptors = ['BRISK', 'AKAZE', 'KAZE']
+        self.descriptors = ['AKAZE', 'BRISK' , 'KAZE']
         self.descriptor = cv2.BRISK_create()
         self.processors = []
         self.reserved_processors = []
@@ -191,7 +192,7 @@ class Controller:
             desc = settings['descriptor']
             if desc == 'BRISK':
                 if settings['descriptor_threshold'] == 0:
-                    self.settings['descriptor_threshold'] = 20
+                    self.settings['descriptor_threshold'] = 30
                 else:
                     self.settings['descriptor_threshold'] = int(settings['descriptor_threshold'])
                 self.descriptor = cv2.BRISK_create(thresh=self.settings['descriptor_threshold'])
@@ -199,7 +200,7 @@ class Controller:
                 self.settings['descriptor_threshold_step'] = 1
             elif desc == 'AKAZE':
                 if settings['descriptor_threshold'] == 0:
-                    self.settings['descriptor_threshold'] = 0.001
+                    self.settings['descriptor_threshold'] = 0.0002
                 else:
                     self.settings['descriptor_threshold'] = float(settings['descriptor_threshold'])
                 self.descriptor = cv2.AKAZE_create(threshold=self.settings['descriptor_threshold'])
@@ -262,8 +263,11 @@ class Controller:
             del self.vision_state.nodes[r]
 
         # remove all previously found edges
-        for i in range(len(self.vision_state.edges)):
-            del self.vision_state.edges[0]
+        if (len(self.vision_state.edges) > 0):
+            for i in range(len(self.vision_state.edges)):
+                if (len(self.vision_state.edges) == 0):
+                    break
+                del self.vision_state.edges[0]
 
         edgeIndex = 0
         # now update
@@ -276,7 +280,8 @@ class Controller:
                 node = self.vision_state.nodes[o['id']]
                 # don't transform while calibrating, otherwise it interferes
                 if not self.transform_processor.calibrate:
-                    node.position[:] = self.transform_processor.warp_point(o['center_scaled'])
+                    center_pos = copy.copy(o['center_scaled'])
+                    node.position[:] = self.transform_processor.warp_point(center_pos)
                 else:
                     node.position[:] = o['center_scaled']
                 node.label = o['label']
@@ -286,7 +291,7 @@ class Controller:
             for o in p.objects:
                 # check the number of connections this object is a primary for
                 if ('connectedToPrimary' in o):
-                    # there are connections
+                    # there potentially are connections
                     for i in range(0,len(o['connectedToPrimary'])):
                         edge = self.vision_state.edges[edgeIndex]
                         edge.idA = o['id']
