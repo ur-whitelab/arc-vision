@@ -21,12 +21,20 @@ class ImageDB:
             self.keypoints = keypoints
             self.features = None
             self.color = (255,255,255)
+            self.meta_id = 0
+
+        @property
+        def id(self):
+            return self.meta_id
         def __getstate__(self):
             # remove keypoints from pickle
             odict = copy.copy(self.__dict__)
             del odict['keypoints']
             del odict['features']
             return odict
+
+        def set_id(self, number):
+            self.meta_id = number
 
         def __setstate__(self, odict):
             self.__dict__.update(odict)
@@ -49,9 +57,13 @@ class ImageDB:
         try:
             os.chdir(template_dir)
             print('Found these pre-processed images in {}:'.format(template_dir))
+            idNumber = 1
             for i in glob.glob('**/*.pickle', recursive=True):
                 with open(os.path.join(template_dir, i), 'rb') as f:
                     img = pickle.load(f)
+                    img.set_id(idNumber)
+                    print("Image {} has ID {}".format(img.label, img.id))
+                    idNumber += 1
                     self.images.append(img)
                     print('\t' + i)
 

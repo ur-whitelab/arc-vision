@@ -15,7 +15,9 @@ import scipy.stats as ss
 from multiprocessing import Process, Pipe, Lock
 import traceback
 
-_object_id = 0
+
+_source_id = 0
+_object_id = 1
 _sentinel = -1
 
 def object_id():
@@ -538,16 +540,19 @@ class TrackerProcessor(Processor):
         # we don't know frame index when track() is called
         self.ticks = 0
         if detector_stride > 0:
-            self.ticks_per_obs = detector_stride * delete_threshold_period / self.stride
+            self.ticks_per_obs = detector_stride * delete_threshold_period /self.stride
 
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
         delete = []
         for i,t in enumerate(self._tracking):
             t['connectedToPrimary'] = [] # list of tracked objects it is connected to as the primary node
-            t['connectedToSecondary'] = []
+            t['connectedToSource'] = False
             status,bbox = t['tracker'].update(frame)
             t['observed'] -= 1
+
+            # if (self.ticks % 50 == 0):
+            #     print("Original scaled center of bbox was {}, tracker updated it to find {}".format(rect_scaled_center(t['bbox'], frame), rect_scaled_center(bbox, frame)))
             # we know our objects should stay the same size all of the time.
             # check if the size dramatically changed.  if so, the object most likely was removed
             # if not, rescale the tracked bbox to the correct size
@@ -557,8 +562,8 @@ class TrackerProcessor(Processor):
                 dist = distance_pts([t['center_scaled'],rect_scaled_center(bbox,frame)])
                 # check if its new location is a reflection, or drastically far away
                 # if it moved some radical distance, reinitialize the tracker on the original frame
-                if (dist > 0.03):
-                    t['tracker'].init(frame, t['bbox'])
+                # if (dist > 0.03):
+                #     t['tracker'].init(frame, t['bbox'])
                 if (areaDiff <= -.15 or dist > .03):
                     t['observed'] -= 1
                     #print("Area difference is {}, counting as null observation".format(areaDiff))
@@ -570,7 +575,7 @@ class TrackerProcessor(Processor):
                     t['delta'][0] = bbox[0] - t['init'][0] # we should use delta somewhere.
                     t['delta'][1] = bbox[1] - t['init'][1]
                     t['bbox'] = bbox
-                    t['center_scaled'] = rect_scaled_center(bbox_p, frame)
+                    t['center_scaled'] = rect_scaled_center(bbox, frame)
 
 
             # check obs counts
@@ -579,6 +584,12 @@ class TrackerProcessor(Processor):
         offset = 0
         delete.sort()
         for i in delete:
+            for j,t in enumerate(self._tracking):
+                # remove any references of this node from connectedToPrimary
+                t2 = self._tracking[i-offset]
+                if (t2['id'],t2['label']) in t['connectedToPrimary']:
+                    index = t['connectedToPrimary'].index((t2['id'],t2['label']))
+                    del t['connectedToPrimary'][index]
             del self._tracking[i - offset]
             offset += 1
 
@@ -587,10 +598,15 @@ class TrackerProcessor(Processor):
         return frame
 
     def _connect_objects(self, frameSize):
-        if (self.lineDetector is None) or len(self._tracking) <= 1 or len(self.lineDetector.lines) == 0:
+        if (self.lineDetector is None) or len(self.lineDetector.lines) == 0:
             return
         ''' Iterates through tracked objects and the detected lines, finding objects are connected. Updates self._tracking to have directional knowledge of connections'''
-        dist_th_upper = 200 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
+        source_position_scaled = (1.0,0.5)
+        source_position_unscaled = (frameSize[1],round(frameSize[0]*.5))
+        #source_position_unscaled = self._unscale_point(source_position_scaled, frameSize)
+        source_dist_thresh_upper = 500
+        source_dist_thresh_lower = 10
+        dist_th_upper = 750 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
         dist_th_lower = 100 # to account for the size of the reactor
         used_lines = []
         for i,t1 in enumerate(self._tracking):
@@ -605,18 +621,30 @@ class TrackerProcessor(Processor):
                 nearbyEndpointFound = False
                 if (val_in_range(dist_ep1,dist_th_lower,dist_th_upper) or val_in_range(dist_ep2,dist_th_lower,dist_th_upper)):
                     # we have a connection! use the endpoint that is further away to find another object thats close to it
+
                     if (dist_ep1 <= dist_ep2):
                         # use endpoint 2
                         endpoint = line['endpoints'][1]
+                        #print("{} at {} is close to {} with a distance of {}, using {} to detect a connection".format(t1['name'], center, dist_ep1, line['endpoints'][0], line['endpoints'][1]))
                     else:
                         endpoint = line['endpoints'][0]
+                        #print("{} at {} is close to {} with a distance of {}, using {} to detect a connection".format(t1['name'], center, dist_ep2, line['endpoints'][1], line['endpoints'][0]))
+
+                    # first check if the opposite endpoint is closest to the source
+                    dist_source = distance_pts((source_position_unscaled, endpoint))
+                    if (val_in_range(dist_source, source_dist_thresh_lower, source_dist_thresh_upper)):
+                        # connected to the source
+                        t1['connectedToSource'] = True
+                        print("Item {} is connected to the source".format(t1['label']))
+                        used_lines.append(k)
+                        break
                     # iterate over all tracked objects again to see if the end of this line is close enough to any other object
                     for j,t2 in enumerate(self._tracking):
                         if (i == j):
                             # don't attempt to find connections to yourself
                             continue
                         # also don't attempt a connection if these two are already connected
-                        if (((t2['id'], t2['label']) in t1['connectedToPrimary']) or ((t2['id'], t2['label']) in t1['connectedToSecondary'])):
+                        if (((t2['id'], t2['label']) in t1['connectedToPrimary'])):
                             continue
 
                         center2 = self._unscale_point(t2['center_scaled'], frameSize)
@@ -629,19 +657,19 @@ class TrackerProcessor(Processor):
                             if (center[0] > center2[0]) or (center[0] == center2[0] and center[1] < center2[1]):
                                 # first point is the primary
                                 t1['connectedToPrimary'].append((t2['id'], t2['label']))
-                                t2['connectedToSecondary'].append((t1['id'], t1['label'])) # secondary is ultimately not used in the protobuf/graph, but it is useful to know for debug purposes
                             else:
                                 t2['connectedToPrimary'].append((t1['id'],t1['label']))
-                                t1['connectedToSecondary'].append((t2['id'],t2['label']))
 
-                            print("{} is connected to {}".format(t1['name'], t2['name'])) #debug message
+                            #print("{} is connected to {}".format(t1['name'], t2['name'])) #debug message
+                            #print("Item {} is connected to {}".format(t1['label'], t2['label']))
 
                             # make sure that the line used to discern this connection is not used again
                             used_lines.append(k)
                             break
+                        else:
+                            pass
+                            #print("dist from object {} was {}".format(t2['name'], dist2))
 
-                else:
-                    pass
 
 
     def _unscale_point(self,point,shape):
@@ -679,7 +707,7 @@ class TrackerProcessor(Processor):
 
         return frame
 
-    def track(self, frame, bbox, poly, label):
+    def track(self, frame, bbox, poly, label, id_num):
         '''
         Track a newly found object
         '''
@@ -715,8 +743,8 @@ class TrackerProcessor(Processor):
                 return
 
 
-        name = '{}-{}'.format(label, self.labels[label] - 1)
-
+        #name = '{}-{}'.format(label, self.labels[label] - 1)
+        name = '{}-{}'.format(label, id_num)
         tracker = cv2.TrackerMedianFlow_create()
         status = tracker.init(frame, bbox)
 
@@ -735,8 +763,8 @@ class TrackerProcessor(Processor):
                      'observed': self.ticks_per_obs,
                      'start': self.ticks,
                      'delta': np.int32([0,0]),
-                     'id': object_id(),
-                     'connectedTo': []}
+                     'id': id_num,
+                     'connectedToPrimary': []}
         self._tracking.append(track_obj)
         return True
 
@@ -1046,7 +1074,7 @@ class TrainingProcessor(Processor):
 
 class DetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
-    def __init__(self, camera, background, img_db, descriptor, stride=5,
+    def __init__(self, camera, background, img_db, descriptor, stride=3,
                  threshold=0.8, template_size=256, min_match=6,
                  weights=[3, -1, -1, -10, 5], max_segments=10,
                  track=True):
@@ -1221,7 +1249,7 @@ class DetectionProcessor(Processor):
                             'score': score, 'rect': bounds}
                         # register it with our tracker
                         if self.track:
-                            self.tracker.track(frame, bounds, np.int32(dst_poly), name)
+                            self.tracker.track(frame, bounds, np.int32(dst_poly), name, t.id)
             except cv2.error:
                 #not enough points
                 await asyncio.sleep(0)
@@ -1351,8 +1379,9 @@ class LineDetectionProcessor(Processor):
                 area_thresh_upper = 20000
                 area_thresh_lower = 200
                 width_thresh = 25
-                length_thresh = 30
-                if (aspectRatio < aspect_ratio_thresh and area > area_thresh_lower and area < area_thresh_upper and minDim < width_thresh and maxDim > length_thresh):
+                length_thresh_lower = 100
+                length_thresh_upper = 600
+                if (aspectRatio < aspect_ratio_thresh and area > area_thresh_lower and area < area_thresh_upper and minDim < width_thresh and val_in_range(maxDim, length_thresh_lower, length_thresh_upper)):
                     # only do vertex calculation if it is the correct shape
                     endpoints = box_to_endpoints(rect)
                     transpose_shape = np.flip(np.array(mask.shape),0)
@@ -1382,7 +1411,7 @@ class LineDetectionProcessor(Processor):
     def threshold_background(self,frame):
         sum_diff = self.absDiff_background(frame)
         # threshold this value- play with thresh_val in prod
-        thresh_val = 40
+        thresh_val = 45
         _,mask = cv2.threshold(sum_diff, thresh_val, 255, cv2.THRESH_BINARY)
         # apply a sharpening filter
         kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])

@@ -250,6 +250,15 @@ class Controller:
 
     def sync_objects(self):
         remove = []
+        newGraph = Graph()
+        for key in self.vision_state.nodes:
+            oldNode = self.vision_state.nodes[key]
+            node = newGraph.nodes[key]
+            node.label = oldNode.label
+            node.id = oldNode.id
+            node.position[:] = oldNode.position[:]
+            node.delete = oldNode.delete
+        self.vision_state = newGraph
         for key in self.vision_state.nodes:
             # remove those that were marked last time
             if self.vision_state.nodes[key].delete:
@@ -262,13 +271,16 @@ class Controller:
         for r in remove:
             del self.vision_state.nodes[r]
 
-        # remove all previously found edges
-        if (len(self.vision_state.edges) > 0):
-            for i in range(len(self.vision_state.edges)):
-                if (len(self.vision_state.edges) == 0):
-                    break
-                del self.vision_state.edges[0]
-
+        # while (len(self.vision_state.edges) > 0):
+        #     del self.vision_state.edges[0]
+        #remove all previously found edges
+        # if (len(self.vision_state.edges) > 0):
+        #     print("Number of edges is {}".format(len(self.vision_state.edges)))
+        #     for i in range(0,len(self.vision_state.edges)):
+        #         if (len(self.vision_state.edges) == 0):
+        #             break
+        #         del self.vision_state.edges[0]
+        #del self.vision_state.edges[:]
         edgeIndex = 0
         # now update
         if not self.transform_processor.calibrate:
@@ -300,6 +312,17 @@ class Controller:
                         dstId,dstLabel = o['connectedToPrimary'][i]
                         edge.idB = dstId
                         edge.labelB = dstLabel
+                        edgeIndex += 1
+                if ('connectedToSource' in o):
+                    # the item is potentially connected to the source
+                    print("Is item {} connected to source? {}".format(o['label'], o['connectedToSource']))
+                    if (o['connectedToSource'] == True):
+                        print("Alright, adding the edge to source")
+                        edge = self.vision_state.edges[edgeIndex]
+                        edge.idA = 0
+                        edge.labelA = 'source'
+                        edge.idB = o['id']
+                        edge.labelB = o['label']
                         edgeIndex += 1
 
 
