@@ -315,9 +315,9 @@ class Controller:
                         edgeIndex += 1
                 if ('connectedToSource' in o):
                     # the item is potentially connected to the source
-                    print("Is item {} connected to source? {}".format(o['label'], o['connectedToSource']))
+                   # print("Is item {} connected to source? {}".format(o['label'], o['connectedToSource']))
                     if (o['connectedToSource'] == True):
-                        print("Alright, adding the edge to source")
+                        #print("Alright, adding the edge to source")
                         edge = self.vision_state.edges[edgeIndex]
                         edge.idA = 0
                         edge.labelA = 'source'

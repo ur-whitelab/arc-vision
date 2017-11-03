@@ -635,7 +635,7 @@ class TrackerProcessor(Processor):
                     if (val_in_range(dist_source, source_dist_thresh_lower, source_dist_thresh_upper)):
                         # connected to the source
                         t1['connectedToSource'] = True
-                        print("Item {} is connected to the source".format(t1['label']))
+                       # print("Item {} is connected to the source".format(t1['label']))
                         used_lines.append(k)
                         break
                     # iterate over all tracked objects again to see if the end of this line is close enough to any other object
