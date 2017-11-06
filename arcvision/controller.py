@@ -53,17 +53,17 @@ class Controller:
         #settings
         self.settings = {'mode': 'background',
                          'pause': False,
-                         'descriptor': 'BRISK',
-                         'descriptor_threshold': 20,
-                         'descriptor_threshold_bounds': (1,30),
-                         'descriptor_threshold_step': 1}
+                         'descriptor': 'AKAZE',
+                         'descriptor_threshold': 0.0002,
+                         'descriptor_threshold_bounds': (0.00001,0.01),
+                         'descriptor_threshold_step': 0.00005}
         self.modes = ['background',
                       'detection',
                       'training',
                       'colors',
                       'calibration']
         self.descriptors = ['AKAZE', 'BRISK' , 'KAZE']
-        self.descriptor = cv2.BRISK_create()
+        self.descriptor = cv2.AKAZE_create()
         self.processors = []
         self.reserved_processors = []
         self.background = None
@@ -250,6 +250,7 @@ class Controller:
 
     def sync_objects(self):
         remove = []
+        # use a new graph so we don't have to mark edges for deletion, just copy the nodes in
         newGraph = Graph()
         for key in self.vision_state.nodes:
             oldNode = self.vision_state.nodes[key]
@@ -271,16 +272,7 @@ class Controller:
         for r in remove:
             del self.vision_state.nodes[r]
 
-        # while (len(self.vision_state.edges) > 0):
-        #     del self.vision_state.edges[0]
-        #remove all previously found edges
-        # if (len(self.vision_state.edges) > 0):
-        #     print("Number of edges is {}".format(len(self.vision_state.edges)))
-        #     for i in range(0,len(self.vision_state.edges)):
-        #         if (len(self.vision_state.edges) == 0):
-        #             break
-        #         del self.vision_state.edges[0]
-        #del self.vision_state.edges[:]
+
         edgeIndex = 0
         # now update
         if not self.transform_processor.calibrate:
@@ -291,14 +283,20 @@ class Controller:
             for o in p.objects:
                 node = self.vision_state.nodes[o['id']]
                 # don't transform while calibrating, otherwise it interferes
-                if not self.transform_processor.calibrate:
+                if o['label'] == 'conditions':
+                    # don't bother setting position if this is the conditions node
+                    node.position[:] = [0,0]
+                elif not self.transform_processor.calibrate:
                     center_pos = copy.copy(o['center_scaled'])
                     node.position[:] = self.transform_processor.warp_point(center_pos)
                 else:
                     node.position[:] = o['center_scaled']
                 node.label = o['label']
                 node.id = o['id']
+                if 'weight' in o:
+                    node.weight.append(o['weight'])
                 node.delete = False
+
             # iterate through again, adding edges
             for o in p.objects:
                 # check the number of connections this object is a primary for

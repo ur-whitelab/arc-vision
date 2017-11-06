@@ -9,15 +9,16 @@ from numpy import linalg
 import matplotlib.pyplot as plt
 # from utils import *
 from .utils import *
-
 import pickle
 import scipy.stats as ss
 from multiprocessing import Process, Pipe, Lock
 import traceback
+from .griffin_powermate import GriffinPowermate,DialHandler
 
 
 _source_id = 0
-_object_id = 1
+_conditions_id = 999
+_object_id = 1 # 0 and 999 are reserved for temperature
 _sentinel = -1
 
 def object_id():
@@ -218,7 +219,6 @@ class SpatialCalibrationProcessor(Processor):
         self.writeOnPause = writeOnPause
         self.readAtReset = readAtInit
         self.reset()
-        #self.reset()
 
     @property
     def transform(self):
@@ -271,21 +271,6 @@ class SpatialCalibrationProcessor(Processor):
         self.fit = 100
         self.initial_fit = self.fit
         self.calibrate = False
-
-
-    # def reset(self):
-    #     # check if serialized data exists before loading the transform as the identity
-    #     self.points = np.zeros( (self.N, 2) )
-    #     self.counts = np.zeros( (self.N, 1) )
-    #     self._transform = np.identity(3)
-    #     self._scaled_transform = np.identity(3)
-    #     self._best_scaled_transform = np.identity(3)
-    #     self._best_fit = 0.01 #reasonable amount, anything less shouldn't be used
-    #     self._best_list = np.array([1., 0., 0., 0., 1., 0., 0., 0. ,1.])
-    #     self._best_inv_list = np.array([1., 0., 0., 0., 1., 0., 0., 0., 1.])
-    #     self.fit = 100
-
-    #     self.calibrate = False
 
 
     async def process_frame(self, frame, frame_ind):
@@ -525,8 +510,8 @@ class TrackerProcessor(Processor):
         return self._tracking
 
 
-    def __init__(self, camera, detector_stride, background, delete_threshold_period=2.5, stride=1, detectLines = True):
-        super().__init__(camera, ['track'], stride)
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=2.5, stride=1, detectLines = True, readDials = True):
+        super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
         self.labels = {}
 
@@ -535,6 +520,11 @@ class TrackerProcessor(Processor):
              self.lineDetector = LineDetectionProcessor(camera,stride*2,background)
         else:
             self.lineDetector = None
+
+        if readDials:
+            self.dialReader = DialProcessor(camera, stride=1)
+        else:
+            self.dialReader = None
 
         # need to keep our own ticks because
         # we don't know frame index when track() is called
@@ -557,7 +547,10 @@ class TrackerProcessor(Processor):
             # check if the size dramatically changed.  if so, the object most likely was removed
             # if not, rescale the tracked bbox to the correct size
             if(status):
-                areaDiff = abs(rect_area(bbox) - t['area_init'])/t['area_init']
+                if (t['area_init'] != 0):
+                    areaDiff = abs(rect_area(bbox) - t['area_init'])/t['area_init']
+                else:
+                    areaDiff = 0
                 # experimental value: if the size has changed by more than 15%, count that as a failed observation
                 dist = distance_pts([t['center_scaled'],rect_scaled_center(bbox,frame)])
                 # check if its new location is a reflection, or drastically far away
@@ -680,6 +673,9 @@ class TrackerProcessor(Processor):
     async def decorate_frame(self, frame, name):
         if name != 'track':
             return frame
+        if name == 'line-segmentation':
+            frame = self.lineDetector.threshold_background(frame)
+            return frame
         for i,t in enumerate(self._tracking):
             if(t['observed'] < 3):
                 continue
@@ -707,7 +703,7 @@ class TrackerProcessor(Processor):
 
         return frame
 
-    def track(self, frame, bbox, poly, label, id_num):
+    def track(self, frame, bbox, poly, label, id_num, temperature = 298):
         '''
         Track a newly found object
         '''
@@ -716,6 +712,11 @@ class TrackerProcessor(Processor):
         else:
             self.labels[label] = 1
 
+        # get current value of temperature - this will not change after the initialization
+        if (self.dialReader is not None):
+            temperature = self.dialReader.temperature
+        else:
+            temperature = 298
         #we need to make sure we don't have an existing object here
         for t in self._tracking:
             intersection = intersecting(bbox, t['bbox'])
@@ -743,7 +744,6 @@ class TrackerProcessor(Processor):
                 return
 
 
-        #name = '{}-{}'.format(label, self.labels[label] - 1)
         name = '{}-{}'.format(label, id_num)
         tracker = cv2.TrackerMedianFlow_create()
         status = tracker.init(frame, bbox)
@@ -751,6 +751,8 @@ class TrackerProcessor(Processor):
         if not status:
             print('Failed to initialize tracker')
             return False
+
+
 
         track_obj = {'name': name,
                      'tracker': tracker,
@@ -764,7 +766,8 @@ class TrackerProcessor(Processor):
                      'start': self.ticks,
                      'delta': np.int32([0,0]),
                      'id': id_num,
-                     'connectedToPrimary': []}
+                     'connectedToPrimary': [],
+                     'weight':[temperature]}
         self._tracking.append(track_obj)
         return True
 
@@ -1425,3 +1428,59 @@ class LineDetectionProcessor(Processor):
             return True
         else:
             return False
+
+
+class DialProcessor(Processor):
+    ''' Class to handle sending the pressure and temperature data to the graph. Does no image processing '''
+    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 1, tempLowerBound = 298, tempUpperBound = 598, debug = True):
+        # assuming
+        # set stride low because we have no image processing to take time
+        super().__init__(camera, [], stride)
+        self.initTemp = initialTemperatureValue
+        self.tempStep = float(temperatureStep)
+        self.debug = debug
+        self.reset()
+
+    def reset(self):
+        devices = GriffinPowermate.find_all()
+        if len(devices) == 0:
+            self.temperatureHandler = None
+        else :
+            self.temperatureHandler = DialHandler(devices[0], self.initTemp, self.tempStep)
+
+
+        # initialize the objects- give them constant ID#s
+        self._objects = [{"id": _conditions_id, "label": "conditions", "weight":[self.initTemp]}]
+
+    @property
+    def temperature(self):
+        return self._objects[0]["weight"][0]
+
+    async def process_frame(self, frame, frame_ind):
+        # we're going to ignore the frame, just get the values from the dial handlers
+        if self.temperatureHandler is not None:
+            for o in self._objects:
+                if o["label"] is "conditions":
+                    o["weight"] = [self.temperatureHandler.value]
+
+        if (self.debug and frame_ind % 100 == 0):
+            print("DEBUG: Current Temperature is {} K".format(self.temperature))
+        return frame
+
+
+    async def decorate_frame(self, frame, name):
+        # Not going to do anything here
+        return frame
+
+    def close(self):
+        super().close()
+        self.temperatureHandler.close()
+        self.pressureHandler.close()
+
+    def play(self):
+        self.pressureHandler.play()
+        self.temperatureHandler.play()
+
+    def pause(self):
+        self.pressureHandler.pause()
+        self.temperatureHandler.pause()
