@@ -507,7 +507,10 @@ class TrackerProcessor(Processor):
     @property
     def objects(self):
         '''Objects should have a dictionary with center, bbox, name, and id'''
-        return self._tracking
+        if (self.dialReader is not None):
+            return self.dialReader._objects + self._tracking
+        else:
+            return self._tracking
 
 
     def __init__(self, camera, detector_stride, background, delete_threshold_period=2.5, stride=1, detectLines = True, readDials = True):
@@ -520,17 +523,18 @@ class TrackerProcessor(Processor):
              self.lineDetector = LineDetectionProcessor(camera,stride*2,background)
         else:
             self.lineDetector = None
+        # need to keep our own ticks because
+        # we don't know frame index when track() is called
+        self.ticks = 0
+        if detector_stride > 0:
+            self.ticks_per_obs = detector_stride * delete_threshold_period /self.stride
 
         if readDials:
             self.dialReader = DialProcessor(camera, stride=1)
         else:
             self.dialReader = None
 
-        # need to keep our own ticks because
-        # we don't know frame index when track() is called
-        self.ticks = 0
-        if detector_stride > 0:
-            self.ticks_per_obs = detector_stride * delete_threshold_period /self.stride
+
 
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
@@ -767,7 +771,7 @@ class TrackerProcessor(Processor):
                      'delta': np.int32([0,0]),
                      'id': id_num,
                      'connectedToPrimary': [],
-                     'weight':[temperature]}
+                     'weight':[temperature,1]}
         self._tracking.append(track_obj)
         return True
 
@@ -1439,18 +1443,21 @@ class DialProcessor(Processor):
         self.initTemp = initialTemperatureValue
         self.tempStep = float(temperatureStep)
         self.debug = debug
+        self.tempLowerBound = tempLowerBound
+        self.tempUpperBound = tempUpperBound
         self.reset()
+
 
     def reset(self):
         devices = GriffinPowermate.find_all()
         if len(devices) == 0:
             self.temperatureHandler = None
         else :
-            self.temperatureHandler = DialHandler(devices[0], self.initTemp, self.tempStep)
+            self.temperatureHandler = DialHandler(devices[0], self.initTemp, self.tempStep, self.tempLowerBound,self.tempUpperBound)
 
 
         # initialize the objects- give them constant ID#s
-        self._objects = [{"id": _conditions_id, "label": "conditions", "weight":[self.initTemp]}]
+        self._objects = [{"id": _conditions_id, "label": "conditions", "weight":[self.initTemp,1]}]
 
     @property
     def temperature(self):
@@ -1461,7 +1468,7 @@ class DialProcessor(Processor):
         if self.temperatureHandler is not None:
             for o in self._objects:
                 if o["label"] is "conditions":
-                    o["weight"] = [self.temperatureHandler.value]
+                    o["weight"] = [self.temperatureHandler.value,1]
 
         if (self.debug and frame_ind % 100 == 0):
             print("DEBUG: Current Temperature is {} K".format(self.temperature))

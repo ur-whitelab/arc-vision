@@ -294,7 +294,9 @@ class Controller:
                 node.label = o['label']
                 node.id = o['id']
                 if 'weight' in o:
-                    node.weight.append(o['weight'])
+                    # weight is a list. append each value
+                    for val in o['weight']:
+                        node.weight.append(val)
                 node.delete = False
 
             # iterate through again, adding edges
