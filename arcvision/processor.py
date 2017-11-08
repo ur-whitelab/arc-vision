@@ -218,6 +218,8 @@ class SpatialCalibrationProcessor(Processor):
         self.channel = channel
         self.writeOnPause = writeOnPause
         self.readAtReset = readAtInit
+        self.frameWidth = camera.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        self.frameHeight = camera.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.reset()
 
     @property
@@ -238,30 +240,51 @@ class SpatialCalibrationProcessor(Processor):
     def pause(self):
         # only write good fits/better than the previously calculated one
         if (self.writeOnPause and self.fit < .001 and self.fit < self.initial_fit):
-            pickle.dump({"transform":self._transform, "scaled_transform":self._scaled_transform, "best_scaled_transform":self._best_scaled_transform, "best_list":self._best_list, "best_inv_list":self._best_inv_list, "fit":self.fit}, open(".\calibrationdata\spatialCalibrationData.p", "wb"))
+            if (os.path.exists(SpatialCalibrationProcessor.PICKLE_FILE)):
+                # read the existing data file to update
+                data = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, "rb"))
+            else:
+                # start fresh
+                data = {}
+            # create a sub-dict for this resolution
+            subData = {}
+            subData["transform"] = self._transform
+            subData["scaled_transform"]=self._scaled_transform
+            subData["best_scaled_transform"] = self._best_scaled_transform
+            subData["best_list"] = self._best_list
+            subData["best_inv_list"] = self._best_inv_list
+            subData["fit"] = self.fit
+            subData["width"] = self.frameWidth
+            subData["height"] = self.frameHeight
+
+            # add it to the existing dictionary, then write the updated data out
+            data["{}x{}".format(self.frameWidth, self.frameHeight)] = subData
+
+            pickle.dump(data, open(SpatialCalibrationProcessor.PICKLE_FILE, "wb"))
         self.calibrate = False
 
     def reset(self):
-        # read the pickle file
-        if(self.readAtReset and os.path.exists(".\calibrationdata\spatialCalibrationData.p")):
-            # check if serialized data exists before loading the transform as the identity
-            self.points = np.zeros( (self.N, 2) )
-            self.counts = np.zeros( (self.N, 1) )
-            data = pickle.load(open(".\calibrationdata\spatialCalibrationData.p", "rb"))
-            self.first = False
-            self._transform = data['transform']
-            self._scaled_transform = data['scaled_transform']
-            self._best_scaled_transform = data['best_scaled_transform']
-            self._best_list = data['best_list']
-            self._best_inv_list = data['best_inv_list']
-            self.fit = data['fit']
-            self._best_fit = 0.01
-            self.calibrate = False
-            self.first = False
-            self.initial_fit = self.fit
-            return
         self.points = np.zeros( (self.N, 2) )
         self.counts = np.zeros( (self.N, 1) )
+        # read the pickle file
+        if(self.readAtReset and os.path.exists(SpatialCalibrationProcessor.PICKLE_FILE)):
+            # check if the currently read file has an entry for this resolution
+            allData = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, "rb"))
+            res_string = "{}x{}".format(self.frameWidth, self.frameHeight)
+            if (res_string in allData):
+                data =allData[res_string]
+                self.first = False
+                self._transform = data['transform']
+                self._scaled_transform = data['scaled_transform']
+                self._best_scaled_transform = data['best_scaled_transform']
+                self._best_list = data['best_list']
+                self._best_inv_list = data['best_inv_list']
+                self.fit = data['fit']
+                self._best_fit = 0.01
+                self.calibrate = False
+                self.first = False
+                self.initial_fit = self.fit
+                return
         self._transform = np.identity(3)
         self._scaled_transform = np.identity(3)
         self._best_scaled_transform = np.identity(3)
@@ -1436,7 +1459,7 @@ class LineDetectionProcessor(Processor):
 
 class DialProcessor(Processor):
     ''' Class to handle sending the pressure and temperature data to the graph. Does no image processing '''
-    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 1, tempLowerBound = 298, tempUpperBound = 598, debug = True):
+    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 1, tempLowerBound = 298, tempUpperBound = 598, debug = False):
         # assuming
         # set stride low because we have no image processing to take time
         super().__init__(camera, [], stride)
@@ -1467,7 +1490,7 @@ class DialProcessor(Processor):
         # we're going to ignore the frame, just get the values from the dial handlers
         if self.temperatureHandler is not None:
             for o in self._objects:
-                if o["label"] is "conditions":
+                if o["label"] is "conditions": # in case we ever wanted to do other work with the dials, leaving the framework in place to handle multiples
                     o["weight"] = [self.temperatureHandler.value,1]
 
         if (self.debug and frame_ind % 100 == 0):
