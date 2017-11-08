@@ -259,11 +259,14 @@ class Controller:
             node.id = oldNode.id
             node.position[:] = oldNode.position[:]
             node.delete = oldNode.delete
+            node.weight[:] = oldNode.weight[:]
         self.vision_state = newGraph
         for key in self.vision_state.nodes:
             # remove those that were marked last time
             if self.vision_state.nodes[key].delete:
                 remove.append(key)
+            elif self.vision_state.nodes[key].label == 'conditions':
+                continue
             # mark others as dirty
             else:
                 self.vision_state.nodes[key].delete = True
@@ -282,10 +285,25 @@ class Controller:
         for p in processorsToUpdate:
             for o in p.objects:
                 node = self.vision_state.nodes[o['id']]
-                # don't transform while calibrating, otherwise it interferes
                 if o['label'] == 'conditions':
                     # don't bother setting position if this is the conditions node
                     node.position[:] = [0,0]
+                    node.label = o['label']
+                    node.id = o['id']
+                    if 'weight' in o:
+                        # weight is a list. append each value
+                        if (len(o['weight']) == 0):
+                            print("ERROR: conditions node has no weight")
+                        for j in range(0,len(o['weight'])):
+                            if len(node.weight) < j+1:
+                                node.weight.append(o['weight'][j])
+                            else:
+                                node.weight[j] = o['weight'][j]
+                    else:
+                        print("ERROR: conditions node has no weight")
+                    continue
+
+                # don't transform while calibrating, otherwise it interferes
                 elif not self.transform_processor.calibrate:
                     center_pos = copy.copy(o['center_scaled'])
                     node.position[:] = self.transform_processor.warp_point(center_pos)
@@ -295,8 +313,11 @@ class Controller:
                 node.id = o['id']
                 if 'weight' in o:
                     # weight is a list. append each value
-                    for val in o['weight']:
-                        node.weight.append(val)
+                    for j in range(0,len(o['weight'])):
+                        if len(node.weight) < j+1:
+                            node.weight.append(o['weight'][j])
+                        else:
+                            node.weight[j] = o['weight'][j]
                 node.delete = False
 
             # iterate through again, adding edges
@@ -315,7 +336,6 @@ class Controller:
                         edgeIndex += 1
                 if ('connectedToSource' in o):
                     # the item is potentially connected to the source
-                   # print("Is item {} connected to source? {}".format(o['label'], o['connectedToSource']))
                     if (o['connectedToSource'] == True):
                         #print("Alright, adding the edge to source")
                         edge = self.vision_state.edges[edgeIndex]

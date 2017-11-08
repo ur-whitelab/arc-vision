@@ -1132,7 +1132,7 @@ class DetectionProcessor(Processor):
         self.stretch_boxes=1.5
         self.track = track
         self.templates = img_db
-
+        self.stride = stride
 
         # Initiate descriptors
         self.desc = descriptor
@@ -1170,7 +1170,7 @@ class DetectionProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
             #copy the frame into it so we don't have it processed by later methods
-            asyncio.ensure_future(self._identify_features(frame.copy()))
+            asyncio.ensure_future(self._identify_features(frame.copy(), frame_ind))
         return frame
 
     async def decorate_frame(self, frame, name):
@@ -1207,7 +1207,7 @@ class DetectionProcessor(Processor):
 
         return frame
 
-    async def _identify_features(self, frame):
+    async def _identify_features(self, frame, frame_ind):
         self._ready = False
         #make new features object
         features = {}
@@ -1216,7 +1216,7 @@ class DetectionProcessor(Processor):
         for rect in self.segmenter.segments(frame):
             kp, des = keypoints_view(self.desc, frame, rect)
             if(des is not None and len(des) > 3):
-                rect_features = await self._process_frame_view(frame, kp, des, rect)
+                rect_features = await self._process_frame_view(frame, kp, des, rect, frame_ind)
                 if len(rect_features) > 0:
                     found_feature = True
                     best = max(rect_features, key=lambda x: rect_features[x]['score'])
@@ -1228,12 +1228,22 @@ class DetectionProcessor(Processor):
             self.features = features
         self._ready = True
 
-    async def _process_frame_view(self, frame, kp, des, bounds):
+    async def _process_frame_view(self, frame, kp, des, bounds, frame_ind):
         '''This method tries to run the calculation over multiple loops.
             The _ready is to in lieu of a callback on completion'''
         self._ready = False
         features = {}
         for t in self.templates:
+            # check if t is already in play by its id number
+            # if yes, check the frame index and see if this index is 2x the stride.
+            templateInPlay = False
+            for o in self.objects:
+                if o["id"] == t.id:
+                    templateInPlay = True
+
+            if (templateInPlay and (frame_ind % (self._stride*2) != 0)):
+                continue
+
             try:
                 template = t.img
                 name = t.label
@@ -1500,6 +1510,7 @@ class DialProcessor(Processor):
         devices = GriffinPowermate.find_all()
         if len(devices) == 0:
             self.temperatureHandler = None
+            print("ERROR: FOUND NO DEVICES")
         else :
             self.temperatureHandler = DialHandler(devices[0], self.initTemp, self.tempStep, self.tempLowerBound,self.tempUpperBound)
 
