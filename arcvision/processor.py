@@ -481,11 +481,11 @@ class PreprocessProcessor(Processor):
 
 class BackgroundProcessor(Processor):
     '''Substracts and computes background'''
-    def __init__(self, camera):
+    def __init__(self, camera, background = None):
         super().__init__(camera, ['background-removal'], 1)
         self.reset()
         self.pause()
-        self._background = None
+        self._background = background
         self._blank = None
 
     @property
@@ -1298,7 +1298,8 @@ class LineDetectionProcessor(Processor):
         self._lines = [] # initialize as an empty array - list of dicts that contain endpoints, slope, intercept
         self._background = cv2.bilateralFilter(background, 7, 150, 150) # preprocess the background image to help with raster noise
         self._ready = True
-        self._observationLimit = obsLimit # how many calculations/countdowns until we remove a line
+        self._observationLimit = obsLimit # how many failed calculations/countdowns until we remove a line
+        self._stagedLines = [] # lines that were detected in the previous call to process_frame.  if they are detected again, add them to the main line list
 
     @property
     def lines(self):
@@ -1339,21 +1340,23 @@ class LineDetectionProcessor(Processor):
         currentLines = self._lines
         # empty out self._lines.
         self._lines = []
+        leftoverLines = [] # lines that did not match previously staged or currently held lines.  this becomes the next staged lines
         for i in range(0,len(currentLines)):
             # add/adjust a value that indicates if the current line was detected in this latest frame
             currentLines[i]["detected"] = False
+
         for i in range(0,len(detected_lines)):
             detectedEndpoints = detected_lines[i]
             (detectedSlope, detectedIntercept ) = line_from_endpoints(detectedEndpoints)
             # iterate through existing lines - we should store their slope and intercept
-            similarLineUpdated = False
+            mainLineUpdated = False
 
             # if self._lines is empty, it should just add the new line
             for j in range(0,len(currentLines)):
                 existingLine = currentLines[j]
 
                 currentSlope,currentIntercept = line_from_endpoints(existingLine["endpoints"])
-                if(abs(percentDiff(currentSlope,detectedSlope)) < 0.10 and abs(percentDiff(currentIntercept,detectedIntercept)) < .15):
+                if(abs(percentDiff(currentSlope,detectedSlope)) < 0.15 and abs(percentDiff(currentIntercept,detectedIntercept)) < .15):
                     # easy way out - take the longer of the two lines. future implementations should check if they should be overlapped and take the longest line combination from them
                     if (distance_pts(detectedEndpoints) > distance_pts(existingLine['endpoints'])):
                         # replace with the new line
@@ -1364,11 +1367,26 @@ class LineDetectionProcessor(Processor):
                         # restart its countdown
                         currentLines[j]["observed"] = self._observationLimit
                     #however, at this stage, with whatever happens, we should stop iterating over existing lines
-                    similarLineUpdated = True
+                    mainLineUpdated = True
                     break
 
-            if not similarLineUpdated:
-                currentLines.append({"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True, "observed":self._observationLimit})
+            if not mainLineUpdated:
+                # check if this line matches a staged line. if yes, increment its matching staged line's counter.  if not, add it as a new staged line
+                stagedLineUpdated = False
+                for j in range(0, len(self._stagedLines)):
+                    stagedLine = self._stagedLines[j]
+                    stagedSlope = stagedLine["slope"]
+                    stagedIntercept = stagedLine["intercept"]
+                    if (abs(percentDiff(stagedSlope,detectedSlope)) < 0.15 and abs(percentDiff(stagedIntercept, detectedIntercept)) < 0.15):
+                        stagedLineUpdated = True
+                        if(distance_pts(detectedEndpoints) > distance_pts(stagedLine["endpoints"])):
+                            self._stagedLines[j] = {"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True, "observed":self._observationLimit}
+                        else:
+                            self._stagedLines[j]["detected"] = True # staged does not decrement the observation limit, so no need to reset it
+                        # stop iterating over staged lines
+                        break
+                if not stagedLineUpdated:
+                    leftoverLines.append({"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":False, "observed":self._observationLimit})
 
         # one last passthrough, only adding lines that were re-detected or new
         for i in range(0,len(currentLines)):
@@ -1381,6 +1399,13 @@ class LineDetectionProcessor(Processor):
                 lineDict["observed"] -= 1
                 if (lineDict["observed"] > 0):
                     self._lines.append(lineDict)
+
+        # add any staged lines to the main list if they were detected again. set the leftover lines to be the new staged lines
+        for i in range(0,len(self._stagedLines)):
+            lineDict = self._stagedLines[i]
+            if (lineDict["detected"]):
+                self._lines.append(lineDict)
+        self._stagedLines = leftoverLines
         self._ready = True
 
 
@@ -1408,7 +1433,7 @@ class LineDetectionProcessor(Processor):
                 aspect_ratio_thresh = 0.3
                 area_thresh_upper = 20000
                 area_thresh_lower = 200
-                width_thresh = 25
+                width_thresh = 30
                 length_thresh_lower = 100
                 length_thresh_upper = 600
                 if (aspectRatio < aspect_ratio_thresh and area > area_thresh_lower and area < area_thresh_upper and minDim < width_thresh and val_in_range(maxDim, length_thresh_lower, length_thresh_upper)):
