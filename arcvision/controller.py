@@ -54,7 +54,7 @@ class Controller:
         self.settings = {'mode': 'background',
                          'pause': False,
                          'descriptor': 'AKAZE',
-                         'descriptor_threshold': 0.0002,
+                         'descriptor_threshold': 0.0001,
                          'descriptor_threshold_bounds': (0.00001,0.01),
                          'descriptor_threshold_step': 0.00005}
         self.modes = ['background',
@@ -200,7 +200,7 @@ class Controller:
                 self.settings['descriptor_threshold_step'] = 1
             elif desc == 'AKAZE':
                 if settings['descriptor_threshold'] == 0:
-                    self.settings['descriptor_threshold'] = 0.0002
+                    self.settings['descriptor_threshold'] = 0.0001
                 else:
                     self.settings['descriptor_threshold'] = float(settings['descriptor_threshold'])
                 self.descriptor = cv2.AKAZE_create(threshold=self.settings['descriptor_threshold'])

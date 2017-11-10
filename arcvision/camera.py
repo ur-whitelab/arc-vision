@@ -175,6 +175,7 @@ class Camera:
         self.decorate_index = i + 1
         if not name in p.streams:
             # bad name, so just give last one
+            #print("THERE ARE {} STREAMS".format(len(p.streams)))
             name = p.streams[-1]
         self.decorate_name = name
         return self.decorated_frame

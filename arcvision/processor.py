@@ -209,7 +209,6 @@ class SpatialCalibrationProcessor(Processor):
         o['center_scaled'] = None
         o['label'] = 'calibration-point'
         self._objects = [o]
-
         self.index = 0
         self.delay = delay
         self.stay = stay
@@ -262,6 +261,8 @@ class SpatialCalibrationProcessor(Processor):
 
             pickle.dump(data, open(SpatialCalibrationProcessor.PICKLE_FILE, "wb"))
         self.calibrate = False
+
+
 
     def reset(self):
         self.points = np.zeros( (self.N, 2) )
@@ -540,7 +541,7 @@ class TrackerProcessor(Processor):
         super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
         self.labels = {}
-
+        self.stride = stride
         # set up line detector
         if detectLines:
              self.lineDetector = LineDetectionProcessor(camera,stride*2,background)
@@ -563,7 +564,8 @@ class TrackerProcessor(Processor):
         self.ticks += 1
         delete = []
         for i,t in enumerate(self._tracking):
-            t['connectedToPrimary'] = [] # list of tracked objects it is connected to as the primary node
+            t['connectedToPrimary'] = [] # list of tracked objects it is connected to as the primary/source node
+            t['connectedToSecondary'] = []
             t['connectedToSource'] = False
             status,bbox = t['tracker'].update(frame)
             t['observed'] -= 1
@@ -615,6 +617,10 @@ class TrackerProcessor(Processor):
 
         #update _tracking with the connections each object has
         self._connect_objects(frame.shape)
+        if frame_ind % 4 * self.stride == 0:
+            for t in self._tracking:
+                print("{} is connected to ({})".format(t['label'], t['connectedToPrimary']))
+                print("Is {} connected to the feed source? {}".format(t['label'], t['connectedToSource']))
         return frame
 
     def _connect_objects(self, frameSize):
@@ -624,7 +630,7 @@ class TrackerProcessor(Processor):
         source_position_scaled = (1.0,0.5)
         source_position_unscaled = (frameSize[1],round(frameSize[0]*.5))
         #source_position_unscaled = self._unscale_point(source_position_scaled, frameSize)
-        source_dist_thresh_upper = 500
+        source_dist_thresh_upper = 300
         source_dist_thresh_lower = 10
         dist_th_upper = 750 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
         dist_th_lower = 100 # to account for the size of the reactor
@@ -639,6 +645,7 @@ class TrackerProcessor(Processor):
                 dist_ep1 = distance_pts((center, line['endpoints'][0]))
                 dist_ep2 = distance_pts((center, line['endpoints'][1]))
                 nearbyEndpointFound = False
+                #print("Closest distance for {} to an endpoint is {}".format(t1['label'], min(dist_ep1,dist_ep2)))
                 if (val_in_range(dist_ep1,dist_th_lower,dist_th_upper) or val_in_range(dist_ep2,dist_th_lower,dist_th_upper)):
                     # we have a connection! use the endpoint that is further away to find another object thats close to it
 
@@ -655,19 +662,28 @@ class TrackerProcessor(Processor):
                     if (val_in_range(dist_source, source_dist_thresh_lower, source_dist_thresh_upper)):
                         # connected to the source
                         t1['connectedToSource'] = True
-                       # print("Item {} is connected to the source".format(t1['label']))
+                        #print("Item {} is connected to the source".format(t1['label']))
                         used_lines.append(k)
                         break
+                    #else:
+                        #print("Distance from source to endpoint was {}".format(dist_source))
                     # iterate over all tracked objects again to see if the end of this line is close enough to any other object
                     for j,t2 in enumerate(self._tracking):
                         if (i == j):
                             # don't attempt to find connections to yourself
                             continue
                         # also don't attempt a connection if these two are already connected
-                        if (((t2['id'], t2['label']) in t1['connectedToPrimary'])):
+                        if (((t2['id'], t2['label']) in t1['connectedToPrimary'])  or ((t2['id'], t2['label']) in t1['connectedToSecondary']) ):
                             continue
 
+                        # check if the slope between the two rxrs and that of the line are similar
                         center2 = self._unscale_point(t2['center_scaled'], frameSize)
+                        #lineSlope = line['slope']
+                        #rxrSlope, intercept = line_from_endpoints((center, center2))
+                        #diffSlope = abs(percentDiff(abs(rxrSlope), abs(lineSlope)))
+                        #print("Slope difference is {}".format(diffSlope))
+                        #if abs(percentDiff(rxrSlope, lineSlope)) > 0.75:
+                        #    continue
                         dist2 = distance_pts((center2, frameSize))
                         if (val_in_range(dist2, dist_th_lower,dist_th_upper)):
                             # its a connection! list this one as a connection, then break out of this loop
@@ -677,8 +693,10 @@ class TrackerProcessor(Processor):
                             if (center[0] > center2[0]) or (center[0] == center2[0] and center[1] < center2[1]):
                                 # first point is the primary
                                 t1['connectedToPrimary'].append((t2['id'], t2['label']))
+                                t2['connectedToSecondary'].append((t1['id'], t1['label']))
                             else:
                                 t2['connectedToPrimary'].append((t1['id'],t1['label']))
+                                t1['connectedToSecondary'].append((t2['id'], t2['label']))
 
                             #print("{} is connected to {}".format(t1['name'], t2['name'])) #debug message
                             #print("Item {} is connected to {}".format(t1['label'], t2['label']))
@@ -711,6 +729,8 @@ class TrackerProcessor(Processor):
             center = t['center_scaled']
             center_pos = np.array(center)
             cv2.circle(frame,tuple(self._unscale(center_pos,frame.shape)), 10, (0,0, 255), -1)
+            source_position_unscaled = (frame.shape[1],round(frame.shape[0]*.5))
+            cv2.circle(frame,source_position_unscaled, 10, (0,0, 255), -1)
             #now draw polygon
             cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
 
@@ -1241,7 +1261,7 @@ class DetectionProcessor(Processor):
                 if o["id"] == t.id:
                     templateInPlay = True
 
-            if (templateInPlay and (frame_ind % (self._stride*2) != 0)):
+            if (templateInPlay and (frame_ind % (self.stride*2) != 0)):
                 continue
 
             try:
@@ -1444,7 +1464,7 @@ class LineDetectionProcessor(Processor):
                 area_thresh_upper = 20000
                 area_thresh_lower = 200
                 width_thresh = 30
-                length_thresh_lower = 100
+                length_thresh_lower = 75
                 length_thresh_upper = 600
                 if (aspectRatio < aspect_ratio_thresh and area > area_thresh_lower and area < area_thresh_upper and minDim < width_thresh and val_in_range(maxDim, length_thresh_lower, length_thresh_upper)):
                     # only do vertex calculation if it is the correct shape

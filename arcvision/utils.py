@@ -192,7 +192,7 @@ def line_from_endpoints(endpoints):
 def distance_pts(endpoints):
     endpoint1 = endpoints[0]
     endpoint2 = endpoints[1]
-    return math.sqrt(math.pow(endpoint1[0]-endpoint2[0],2) + math.pow(endpoint1[0]-endpoint2[0],2))
+    return math.sqrt(math.pow(endpoint1[0]-endpoint2[0],2) + math.pow(endpoint1[1]-endpoint2[1],2))
 
 def val_in_range(val, lower_bound,upper_bound):
     return ((val > lower_bound) and (val < upper_bound))
