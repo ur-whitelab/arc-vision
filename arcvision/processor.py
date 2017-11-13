@@ -678,12 +678,17 @@ class TrackerProcessor(Processor):
 
                         # check if the slope between the two rxrs and that of the line are similar
                         center2 = self._unscale_point(t2['center_scaled'], frameSize)
-                        #lineSlope = line['slope']
-                        #rxrSlope, intercept = line_from_endpoints((center, center2))
-                        #diffSlope = abs(percentDiff(abs(rxrSlope), abs(lineSlope)))
-                        #print("Slope difference is {}".format(diffSlope))
-                        #if abs(percentDiff(rxrSlope, lineSlope)) > 0.75:
-                        #    continue
+                        lineSlope = line['slope']
+                        lineAngle = np.pi/2.0 + np.arctan(lineSlope)#compare angles instead of slopes; bounded space from 0 to pi
+                        rxrSlope, intercept = line_from_endpoints((center, center2)) if center[1] > center2[1] else line_from_endpoints((center2, center))
+                        rxrAngle = np.pi/2.0 + np.arctan(rxrSlope)
+                        angleDiff = abs(lineAngle - rxrAngle)#at most pi
+                        rando = random.random()
+                        if(rando < 0.15):#just print 5% of calls so we don't overflow buffer as fast
+                            print("line angle is {} deg, rxr angle is {} deg, and angle % difference is {}".format(lineAngle * 180./np.pi, rxrAngle * 180./np.pi, angleDiff/np.pi))#print in degrees for legibility
+                        angleThresh = np.pi/8.0
+                        if angleDiff > angleThresh:
+                            continue
                         dist2 = distance_pts((center2, frameSize))
                         if (val_in_range(dist2, dist_th_lower,dist_th_upper)):
                             # its a connection! list this one as a connection, then break out of this loop
@@ -1323,7 +1328,7 @@ class LineDetectionProcessor(Processor):
     ''' Detects drawn lines on an image (NB: works with a red marker or paper strip)
         This will not return knowledge of connections between reactors (that logic should be in DetectionProcessor or TrackerProcessor, which this class should be controlled by)
     '''
-    def __init__(self, camera, stride, background, obsLimit = 5):
+    def __init__(self, camera, stride, background, obsLimit = 7):
         super().__init__(camera, ['image-segmented','lines-detected'],stride)
         self._lines = [] # initialize as an empty array - list of dicts that contain endpoints, slope, intercept
         self._background = cv2.bilateralFilter(background, 7, 150, 150) # preprocess the background image to help with raster noise
@@ -1466,7 +1471,7 @@ class LineDetectionProcessor(Processor):
                 width_thresh = 30
                 length_thresh_lower = 75
                 length_thresh_upper = 600
-                if (aspectRatio < aspect_ratio_thresh and area > area_thresh_lower and area < area_thresh_upper and minDim < width_thresh and val_in_range(maxDim, length_thresh_lower, length_thresh_upper)):
+                if (aspectRatio < aspect_ratio_thresh and val_in_range(area, area_thresh_lower, area_thresh_upper) and minDim < width_thresh and val_in_range(maxDim, length_thresh_lower, length_thresh_upper)):
                     # only do vertex calculation if it is the correct shape
                     endpoints = box_to_endpoints(rect)
                     transpose_shape = np.flip(np.array(mask.shape),0)

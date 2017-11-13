@@ -168,6 +168,7 @@ def rect_color_channel(frame, rect):
     return np.argmax(np.mean(rect_view(frame, rect), axis=(0,1)))
 
 def percentDiff(existingItem, newItem):
+    #TODO: fix so this is robust to 'existingItem' being near-zero, or move to some other comparison
     return float(newItem-existingItem)/existingItem
 
 
@@ -178,13 +179,21 @@ def box_to_endpoints(rect):
 
 
 def line_from_endpoints(endpoints):
+    #TODO: idea: work with angles instead, take actual diff, not relative...
     ''' Compute the slope and bias of a line function given 2 endpoints'''
     endpoint1 = endpoints[0]
     endpoint2 = endpoints[1]
     if ((endpoint1[0] - endpoint2[0] == 0)):
         slope = np.inf
+    elif(endpoint1[1] - endpoint2[1] == 0):\
+        slope = 0.0
     else:
-        slope = (endpoint1[1] - endpoint2[1])/(endpoint1[0] - endpoint2[0])
+        if(endpoint1[0] > endpoint2[0]):#reverse because of back-projection...
+            sign = 1.0
+        else:
+            sign = -1.0
+        #due to how line endpoints are given (lowest y-val is always first), we have to be careful with slopes.
+        slope = sign * (endpoint1[1] - endpoint2[1])/(endpoint1[0] - endpoint2[0])
     intercept = endpoint1[1] - slope*endpoint1[0]
     return (slope,intercept)
 
