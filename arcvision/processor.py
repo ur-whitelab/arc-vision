@@ -194,7 +194,7 @@ class SpatialCalibrationProcessor(Processor):
        previous round estimate'''
 
     ''' Const for the serialization file name '''
-    PICKLE_FILE = ".\calibrationdata\spatialCalibrationData.p"
+    PICKLE_FILE = '.\calibrationdata\spatialCalibrationData.p'
 
     def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20, writeOnPause = True, readAtInit = True):
         #stay should be bigger than delay
@@ -241,25 +241,25 @@ class SpatialCalibrationProcessor(Processor):
         if (self.writeOnPause and self.fit < .001 and self.fit < self.initial_fit):
             if (os.path.exists(SpatialCalibrationProcessor.PICKLE_FILE)):
                 # read the existing data file to update
-                data = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, "rb"))
+                data = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, 'rb'))
             else:
                 # start fresh
                 data = {}
             # create a sub-dict for this resolution
             subData = {}
-            subData["transform"] = self._transform
-            subData["scaled_transform"]=self._scaled_transform
-            subData["best_scaled_transform"] = self._best_scaled_transform
-            subData["best_list"] = self._best_list
-            subData["best_inv_list"] = self._best_inv_list
-            subData["fit"] = self.fit
-            subData["width"] = self.frameWidth
-            subData["height"] = self.frameHeight
+            subData['transform'] = self._transform
+            subData['scaled_transform']=self._scaled_transform
+            subData['best_scaled_transform'] = self._best_scaled_transform
+            subData['best_list'] = self._best_list
+            subData['best_inv_list'] = self._best_inv_list
+            subData['fit'] = self.fit
+            subData['width'] = self.frameWidth
+            subData['height'] = self.frameHeight
 
             # add it to the existing dictionary, then write the updated data out
-            data["{}x{}".format(self.frameWidth, self.frameHeight)] = subData
+            data['{}x{}'.format(self.frameWidth, self.frameHeight)] = subData
 
-            pickle.dump(data, open(SpatialCalibrationProcessor.PICKLE_FILE, "wb"))
+            pickle.dump(data, open(SpatialCalibrationProcessor.PICKLE_FILE, 'wb'))
         self.calibrate = False
 
 
@@ -270,8 +270,8 @@ class SpatialCalibrationProcessor(Processor):
         # read the pickle file
         if(self.readAtReset and os.path.exists(SpatialCalibrationProcessor.PICKLE_FILE)):
             # check if the currently read file has an entry for this resolution
-            allData = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, "rb"))
-            res_string = "{}x{}".format(self.frameWidth, self.frameHeight)
+            allData = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, 'rb'))
+            res_string = '{}x{}'.format(self.frameWidth, self.frameHeight)
             if (res_string in allData):
                 data =allData[res_string]
                 self.first = False
@@ -571,7 +571,7 @@ class TrackerProcessor(Processor):
             t['observed'] -= 1
 
             # if (self.ticks % 50 == 0):
-            #     print("Original scaled center of bbox was {}, tracker updated it to find {}".format(rect_scaled_center(t['bbox'], frame), rect_scaled_center(bbox, frame)))
+            #     print('Original scaled center of bbox was {}, tracker updated it to find {}'.format(rect_scaled_center(t['bbox'], frame), rect_scaled_center(bbox, frame)))
             # we know our objects should stay the same size all of the time.
             # check if the size dramatically changed.  if so, the object most likely was removed
             # if not, rescale the tracked bbox to the correct size
@@ -588,9 +588,9 @@ class TrackerProcessor(Processor):
                 #     t['tracker'].init(frame, t['bbox'])
                 if (areaDiff <= -.15 or dist > .03):
                     t['observed'] -= 1
-                    #print("Area difference is {}, counting as null observation".format(areaDiff))
+                    #print('Area difference is {}, counting as null observation'.format(areaDiff))
                 else:
-                    #print("Updated distance is {}".format(dist))
+                    #print('Updated distance is {}'.format(dist))
                     # rescale the bbox to match the original area?
                     scaleFactor = t['area_init']/rect_area(bbox)
                     bbox_p = stretch_rectangle(bbox, frame, scaleFactor)
@@ -616,23 +616,23 @@ class TrackerProcessor(Processor):
             offset += 1
 
         #update _tracking with the connections each object has
-        self._connect_objects(frame.shape)
+        await self._connect_objects(frame.shape)
         if frame_ind % 4 * self.stride == 0:
             for t in self._tracking:
-                print("{} is connected to ({})".format(t['label'], t['connectedToPrimary']))
-                print("Is {} connected to the feed source? {}".format(t['label'], t['connectedToSource']))
+                print('{} is connected to ({})'.format(t['label'], t['connectedToPrimary']))
+                #print('Is {} connected to the feed source? {}'.format(t['label'], t['connectedToSource']))
         return frame
 
-    def _connect_objects(self, frameSize):
+    async def _connect_objects(self, frameSize):
         if (self.lineDetector is None) or len(self.lineDetector.lines) == 0:
             return
         ''' Iterates through tracked objects and the detected lines, finding objects are connected. Updates self._tracking to have directional knowledge of connections'''
-        source_position_scaled = (1.0,0.5)
+        source_position_scaled = (1.0,0.5)#first coord is X from L to R, second coord is Y from TOP to BOTTOM
         source_position_unscaled = (frameSize[1],round(frameSize[0]*.5))
         #source_position_unscaled = self._unscale_point(source_position_scaled, frameSize)
-        source_dist_thresh_upper = 300
+        source_dist_thresh_upper = 200
         source_dist_thresh_lower = 10
-        dist_th_upper = 750 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
+        dist_th_upper = 300 # distance upper threshold, in pixels #TODO: FIGURE OUT WHY THIS DOESN'T CORRESPOND TO CIRCLE SIZES DISPLAYED
         dist_th_lower = 100 # to account for the size of the reactor
         used_lines = []
         for i,t1 in enumerate(self._tracking):
@@ -645,31 +645,32 @@ class TrackerProcessor(Processor):
                 dist_ep1 = distance_pts((center, line['endpoints'][0]))
                 dist_ep2 = distance_pts((center, line['endpoints'][1]))
                 nearbyEndpointFound = False
-                #print("Closest distance for {} to an endpoint is {}".format(t1['label'], min(dist_ep1,dist_ep2)))
+                #print('Distances for {} {} (position {}) to the endpoints are {} (position {}) and {} (position {})'.format(t1['label'], t1['id'], center, min(dist_ep1,dist_ep2), line['endpoints'][0], max(dist_ep1,dist_ep2), line['endpoints'][1]))
                 if (val_in_range(dist_ep1,dist_th_lower,dist_th_upper) or val_in_range(dist_ep2,dist_th_lower,dist_th_upper)):
                     # we have a connection! use the endpoint that is further away to find another object thats close to it
 
                     if (dist_ep1 <= dist_ep2):
                         # use endpoint 2
                         endpoint = line['endpoints'][1]
-                        #print("{} at {} is close to {} with a distance of {}, using {} to detect a connection".format(t1['name'], center, dist_ep1, line['endpoints'][0], line['endpoints'][1]))
+                        #print('{} at {} is close to {} with a distance of {}, using {} to detect a connection'.format(t1['name'], center, dist_ep1, line['endpoints'][0], line['endpoints'][1]))
                     else:
                         endpoint = line['endpoints'][0]
-                        #print("{} at {} is close to {} with a distance of {}, using {} to detect a connection".format(t1['name'], center, dist_ep2, line['endpoints'][1], line['endpoints'][0]))
+                        #print('{} at {} is close to {} with a distance of {}, using {} to detect a connection'.format(t1['name'], center, dist_ep2, line['endpoints'][1], line['endpoints'][0]))
 
                     # first check if the opposite endpoint is closest to the source
                     dist_source = distance_pts((source_position_unscaled, endpoint))
                     if (val_in_range(dist_source, source_dist_thresh_lower, source_dist_thresh_upper)):
                         # connected to the source
                         t1['connectedToSource'] = True
-                        #print("Item {} is connected to the source".format(t1['label']))
+                        #print('Item {} is connected to the source'.format(t1['label']))
                         used_lines.append(k)
                         break
                     #else:
-                        #print("Distance from source to endpoint was {}".format(dist_source))
+                        #print('Distance from source to endpoint was {}'.format(dist_source))
                     # iterate over all tracked objects again to see if the end of this line is close enough to any other object
                     for j,t2 in enumerate(self._tracking):
-                        if (i == j):
+                        #print('made it this FAR!!! {} {}'.format(t1['id'], t2['id']))#now this DOES print for whatever reason...
+                        if (t1['id'] == t2['id']):
                             # don't attempt to find connections to yourself
                             continue
                         # also don't attempt a connection if these two are already connected
@@ -678,18 +679,18 @@ class TrackerProcessor(Processor):
 
                         # check if the slope between the two rxrs and that of the line are similar
                         center2 = self._unscale_point(t2['center_scaled'], frameSize)
+                        #print('the distance between objects {} {} and {} {} is {}'.format(t1['label'],t1['id'], t2['label'],t2['id'], distance_pts((center, center2))))#now this line is printing again...
                         lineSlope = line['slope']
                         lineAngle = np.pi/2.0 + np.arctan(lineSlope)#compare angles instead of slopes; bounded space from 0 to pi
                         rxrSlope, intercept = line_from_endpoints((center, center2)) if center[1] > center2[1] else line_from_endpoints((center2, center))
                         rxrAngle = np.pi/2.0 + np.arctan(rxrSlope)
                         angleDiff = abs(lineAngle - rxrAngle)#at most pi
-                        rando = random.random()
-                        if(rando < 0.15):#just print 5% of calls so we don't overflow buffer as fast
-                            print("line angle is {} deg, rxr angle is {} deg, and angle % difference is {}".format(lineAngle * 180./np.pi, rxrAngle * 180./np.pi, angleDiff/np.pi))#print in degrees for legibility
-                        angleThresh = np.pi/8.0
+                        #print('line angle is {} deg, rxr angle is {} deg, and angle % difference is {}'.format(lineAngle * 180./np.pi, rxrAngle * 180./np.pi, angleDiff/np.pi))#print in degrees for legibility
+                        #sys.stdout.flush()
+                        angleThresh = np.pi/6.0
                         if angleDiff > angleThresh:
                             continue
-                        dist2 = distance_pts((center2, frameSize))
+                        dist2 = distance_pts((center2, endpoint))
                         if (val_in_range(dist2, dist_th_lower,dist_th_upper)):
                             # its a connection! list this one as a connection, then break out of this loop
                             # we can create directionality by having two lists
@@ -703,20 +704,20 @@ class TrackerProcessor(Processor):
                                 t2['connectedToPrimary'].append((t1['id'],t1['label']))
                                 t1['connectedToSecondary'].append((t2['id'], t2['label']))
 
-                            #print("{} is connected to {}".format(t1['name'], t2['name'])) #debug message
-                            #print("Item {} is connected to {}".format(t1['label'], t2['label']))
+                            #print('{} is connected to {}'.format(t1['name'], t2['name'])) #debug message
+                            #print('Item {} is connected to {}'.format(t1['label'], t2['label']))
 
                             # make sure that the line used to discern this connection is not used again
                             used_lines.append(k)
                             break
                         else:
                             pass
-                            #print("dist from object {} was {}".format(t2['name'], dist2))
+                            #print('dist from object {} was {}'.format(t2['name'], dist2))
 
 
 
     def _unscale_point(self,point,shape):
-        return (point[0]*shape[0], point[1]* shape[1])
+        return (point[0]*shape[1], point[1]* shape[0])
     def _unscale(self, array, shape):
         return (array * [shape[1], shape[0]]).astype(np.int32)
 
@@ -736,6 +737,11 @@ class TrackerProcessor(Processor):
             cv2.circle(frame,tuple(self._unscale(center_pos,frame.shape)), 10, (0,0, 255), -1)
             source_position_unscaled = (frame.shape[1],round(frame.shape[0]*.5))
             cv2.circle(frame,source_position_unscaled, 10, (0,0, 255), -1)
+            #draw the inner and outer dist thresholds for linefinding
+            dist_th_upper = 200 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
+            dist_th_lower = 75 # to account for the size of the reactor
+            cv2.circle(frame, tuple(self._unscale(center_pos,frame.shape)), dist_th_lower, (0,255, 255), 8)#BGR for yellow
+            cv2.circle(frame, tuple(self._unscale(center_pos,frame.shape)), dist_th_upper, (255,255, 0), 8)#BGR for cyan
             #now draw polygon
             cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
 
@@ -748,10 +754,10 @@ class TrackerProcessor(Processor):
         # view lines, as the decorator for LineProcessor is not working
         if (self.lineDetector is not None):
             for i,line in enumerate(self.lineDetector.lines):
-                endpoints = line["endpoints"]
-                # place purple dots at each existing endpoint
-                cv2.circle(frame, (endpoints[0][0],endpoints[0][1]), 3 , (255,0,255), -1)
-                cv2.circle(frame, (endpoints[1][0],endpoints[1][1]), 3 , (255,0,255), -1)
+                endpoints = line['endpoints']
+                # place dots at each existing endpoint. blue for 0, green for 1
+                cv2.circle(frame, (endpoints[0][0],endpoints[0][1]), 3 , (255,0,0), -1)#BGR
+                cv2.circle(frame, (endpoints[1][0],endpoints[1][1]), 3 , (0,255,0), -1)#BGR
 
         return frame
 
@@ -1263,7 +1269,7 @@ class DetectionProcessor(Processor):
             # if yes, check the frame index and see if this index is 2x the stride.
             templateInPlay = False
             for o in self.objects:
-                if o["id"] == t.id:
+                if o['id'] == t.id:
                     templateInPlay = True
 
             if (templateInPlay and (frame_ind % (self.stride*2) != 0)):
@@ -1355,7 +1361,7 @@ class LineDetectionProcessor(Processor):
             return frame
 
         # if name == 'lines-detected':
-        #     print("Adding the points")
+        #     print('Adding the points')
         # add purple points for each endpoint detected
         for i in range(0,len(self._lines)):
             cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
@@ -1370,7 +1376,7 @@ class LineDetectionProcessor(Processor):
     '''
     async def detect_adjust_lines(self,frame):
         self._ready = False
-        detected_lines = self._detect_lines(frame)
+        detected_lines = self._detect_lines(frame)#list of tuples of pair-tuples (the line endpoint coords)
         # need a way to remove previous lines that were not found.
         currentLines = self._lines
         # empty out self._lines.
@@ -1378,7 +1384,7 @@ class LineDetectionProcessor(Processor):
         leftoverLines = [] # lines that did not match previously staged or currently held lines.  this becomes the next staged lines
         for i in range(0,len(currentLines)):
             # add/adjust a value that indicates if the current line was detected in this latest frame
-            currentLines[i]["detected"] = False
+            currentLines[i]['detected'] = False
 
         for i in range(0,len(detected_lines)):
             detectedEndpoints = detected_lines[i]
@@ -1390,17 +1396,17 @@ class LineDetectionProcessor(Processor):
             for j in range(0,len(currentLines)):
                 existingLine = currentLines[j]
 
-                currentSlope,currentIntercept = line_from_endpoints(existingLine["endpoints"])
+                currentSlope,currentIntercept = line_from_endpoints(existingLine['endpoints'])
                 if(abs(percentDiff(currentSlope,detectedSlope)) < 0.15 and abs(percentDiff(currentIntercept,detectedIntercept)) < .15):
                     # easy way out - take the longer of the two lines. future implementations should check if they should be overlapped and take the longest line combination from them
                     if (distance_pts(detectedEndpoints) > distance_pts(existingLine['endpoints'])):
                         # replace with the new line
-                        currentLines[j] = {"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True, "observed":self._observationLimit}
+                        currentLines[j] = {'endpoints':detectedEndpoints, 'slope':detectedSlope, 'intercept':detectedIntercept, 'detected':True, 'observed':self._observationLimit}
                     else:
                         # update an existing line, so we know it was actually found
-                        currentLines[j]["detected"] = True
+                        currentLines[j]['detected'] = True
                         # restart its countdown
-                        currentLines[j]["observed"] = self._observationLimit
+                        currentLines[j]['observed'] = self._observationLimit
                     #however, at this stage, with whatever happens, we should stop iterating over existing lines
                     mainLineUpdated = True
                     break
@@ -1410,35 +1416,35 @@ class LineDetectionProcessor(Processor):
                 stagedLineUpdated = False
                 for j in range(0, len(self._stagedLines)):
                     stagedLine = self._stagedLines[j]
-                    stagedSlope = stagedLine["slope"]
-                    stagedIntercept = stagedLine["intercept"]
+                    stagedSlope = stagedLine['slope']
+                    stagedIntercept = stagedLine['intercept']
                     if (abs(percentDiff(stagedSlope,detectedSlope)) < 0.15 and abs(percentDiff(stagedIntercept, detectedIntercept)) < 0.15):
                         stagedLineUpdated = True
-                        if(distance_pts(detectedEndpoints) > distance_pts(stagedLine["endpoints"])):
-                            self._stagedLines[j] = {"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":True, "observed":self._observationLimit}
+                        if(distance_pts(detectedEndpoints) > distance_pts(stagedLine['endpoints'])):
+                            self._stagedLines[j] = {'endpoints':detectedEndpoints, 'slope':detectedSlope, 'intercept':detectedIntercept, 'detected':True, 'observed':self._observationLimit}
                         else:
-                            self._stagedLines[j]["detected"] = True # staged does not decrement the observation limit, so no need to reset it
+                            self._stagedLines[j]['detected'] = True # staged does not decrement the observation limit, so no need to reset it
                         # stop iterating over staged lines
                         break
                 if not stagedLineUpdated:
-                    leftoverLines.append({"endpoints":detectedEndpoints, "slope":detectedSlope, "intercept":detectedIntercept, "detected":False, "observed":self._observationLimit})
+                    leftoverLines.append({'endpoints':detectedEndpoints, 'slope':detectedSlope, 'intercept':detectedIntercept, 'detected':False, 'observed':self._observationLimit})
 
         # one last passthrough, only adding lines that were re-detected or new
         for i in range(0,len(currentLines)):
             lineDict = currentLines[i]
-            if (lineDict["detected"]):
+            if (lineDict['detected']):
                 self._lines.append(lineDict)
 
             else:
                 # the line was not observed.  decrement the countdown, and only add it into our tracked lines if the observed value is greater than 0
-                lineDict["observed"] -= 1
-                if (lineDict["observed"] > 0):
+                lineDict['observed'] -= 1
+                if (lineDict['observed'] > 0):
                     self._lines.append(lineDict)
 
         # add any staged lines to the main list if they were detected again. set the leftover lines to be the new staged lines
         for i in range(0,len(self._stagedLines)):
             lineDict = self._stagedLines[i]
-            if (lineDict["detected"]):
+            if (lineDict['detected']):
                 self._lines.append(lineDict)
         self._stagedLines = leftoverLines
         self._ready = True
@@ -1535,27 +1541,27 @@ class DialProcessor(Processor):
         devices = GriffinPowermate.find_all()
         if len(devices) == 0:
             self.temperatureHandler = None
-            print("ERROR: FOUND NO DEVICES")
+            print('ERROR: FOUND NO DEVICES')
         else :
             self.temperatureHandler = DialHandler(devices[0], self.initTemp, self.tempStep, self.tempLowerBound,self.tempUpperBound)
 
 
         # initialize the objects- give them constant ID#s
-        self._objects = [{"id": _conditions_id, "label": "conditions", "weight":[self.initTemp,1]}]
+        self._objects = [{'id': _conditions_id, 'label': 'conditions', 'weight':[self.initTemp,1]}]
 
     @property
     def temperature(self):
-        return self._objects[0]["weight"][0]
+        return self._objects[0]['weight'][0]
 
     async def process_frame(self, frame, frame_ind):
         # we're going to ignore the frame, just get the values from the dial handlers
         if self.temperatureHandler is not None:
             for o in self._objects:
-                if o["label"] is "conditions": # in case we ever wanted to do other work with the dials, leaving the framework in place to handle multiples
-                    o["weight"] = [self.temperatureHandler.value,1]
+                if o['label'] is 'conditions': # in case we ever wanted to do other work with the dials, leaving the framework in place to handle multiples
+                    o['weight'] = [self.temperatureHandler.value,1]
 
         if (self.debug and frame_ind % 100 == 0):
-            print("DEBUG: Current Temperature is {} K".format(self.temperature))
+            print('DEBUG: Current Temperature is {} K'.format(self.temperature))
         return frame
 
 

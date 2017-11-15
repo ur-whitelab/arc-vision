@@ -185,7 +185,7 @@ def line_from_endpoints(endpoints):
     endpoint2 = endpoints[1]
     if ((endpoint1[0] - endpoint2[0] == 0)):
         slope = np.inf
-    elif(endpoint1[1] - endpoint2[1] == 0):\
+    elif(endpoint1[1] - endpoint2[1] == 0):
         slope = 0.0
     else:
         if(endpoint1[0] > endpoint2[0]):#reverse because of back-projection...
@@ -193,15 +193,15 @@ def line_from_endpoints(endpoints):
         else:
             sign = -1.0
         #due to how line endpoints are given (lowest y-val is always first), we have to be careful with slopes.
-        slope = sign * (endpoint1[1] - endpoint2[1])/(endpoint1[0] - endpoint2[0])
+        slope = sign * abs(endpoint1[1] - endpoint2[1])/abs(endpoint1[0] - endpoint2[0])
     intercept = endpoint1[1] - slope*endpoint1[0]
     return (slope,intercept)
 
-''' Calculate Euclidean distance between two endpoints '''
+''' Calculate Euclidean distance between two endpoints GIVEN AS A TUPLE'''
 def distance_pts(endpoints):
     endpoint1 = endpoints[0]
     endpoint2 = endpoints[1]
     return math.sqrt(math.pow(endpoint1[0]-endpoint2[0],2) + math.pow(endpoint1[1]-endpoint2[1],2))
 
 def val_in_range(val, lower_bound,upper_bound):
-    return ((val > lower_bound) and (val < upper_bound))
+    return ((val >= lower_bound) and (val <= upper_bound))
