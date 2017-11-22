@@ -243,6 +243,7 @@ class Controller:
     async def update_loop(self):
         startTime = time.time()
         state = await self.update_state()
+        #print(self.vision_state)
         if state is not None:
             await self.pub_sock.send_multipart(['vision-update'.encode(), state.SerializeToString()])
             #exponential moving average of update frequency
@@ -252,6 +253,7 @@ class Controller:
         remove = []
         # use a new graph so we don't have to mark edges for deletion, just copy the nodes in
         newGraph = Graph()
+        newGraph.time = self.vision_state.time
         for key in self.vision_state.nodes:
             oldNode = self.vision_state.nodes[key]
             node = newGraph.nodes[key]

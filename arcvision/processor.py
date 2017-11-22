@@ -632,7 +632,7 @@ class TrackerProcessor(Processor):
         #source_position_unscaled = self._unscale_point(source_position_scaled, frameSize)
         source_dist_thresh_upper = 200
         source_dist_thresh_lower = 10
-        dist_th_upper = 300 # distance upper threshold, in pixels #TODO: FIGURE OUT WHY THIS DOESN'T CORRESPOND TO CIRCLE SIZES DISPLAYED
+        dist_th_upper = 300 # distance upper threshold, in pixels
         dist_th_lower = 100 # to account for the size of the reactor
         used_lines = []
         for i,t1 in enumerate(self._tracking):
