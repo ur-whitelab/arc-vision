@@ -537,7 +537,7 @@ class TrackerProcessor(Processor):
             return self._tracking
 
 
-    def __init__(self, camera, detector_stride, background, delete_threshold_period=2.5, stride=1, detectLines = True, readDials = True):
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=1, detectLines = True, readDials = True):
         super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
         self.labels = {}
@@ -586,7 +586,7 @@ class TrackerProcessor(Processor):
                 # if it moved some radical distance, reinitialize the tracker on the original frame
                 # if (dist > 0.03):
                 #     t['tracker'].init(frame, t['bbox'])
-                if (areaDiff <= -.15 or dist > .03):
+                if (areaDiff >= .15 or dist > .03):
                     t['observed'] -= 1
                     #print('Area difference is {}, counting as null observation'.format(areaDiff))
                 else:
@@ -598,6 +598,7 @@ class TrackerProcessor(Processor):
                     t['delta'][1] = bbox[1] - t['init'][1]
                     t['bbox'] = bbox
                     t['center_scaled'] = rect_scaled_center(bbox, frame)
+                    t['observed'] += 1
 
 
             # check obs counts
@@ -617,9 +618,9 @@ class TrackerProcessor(Processor):
 
         #update _tracking with the connections each object has
         await self._connect_objects(frame.shape)
-        if frame_ind % 4 * self.stride == 0:
-            for t in self._tracking:
-                print('{} is connected to ({})'.format(t['label'], t['connectedToPrimary']))
+        #f frame_ind % 4 * self.stride == 0:
+        #    for t in self._tracking:
+        #        print('{} is connected to ({})'.format(t['label'], t['connectedToPrimary']))
                 #print('Is {} connected to the feed source? {}'.format(t['label'], t['connectedToSource']))
         return frame
 
@@ -740,8 +741,8 @@ class TrackerProcessor(Processor):
             #draw the inner and outer dist thresholds for linefinding
             dist_th_upper = 200 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
             dist_th_lower = 75 # to account for the size of the reactor
-            cv2.circle(frame, tuple(self._unscale(center_pos,frame.shape)), dist_th_lower, (0,255, 255), 8)#BGR for yellow
-            cv2.circle(frame, tuple(self._unscale(center_pos,frame.shape)), dist_th_upper, (255,255, 0), 8)#BGR for cyan
+            cv2.circle(frame, tuple(self._unscale(center_pos,frame.shape)), dist_th_lower, (0,255, 255), 3)#BGR for yellow
+            cv2.circle(frame, tuple(self._unscale(center_pos,frame.shape)), dist_th_upper, (255,255, 0), 3)#BGR for cyan
             #now draw polygon
             cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
 
