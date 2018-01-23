@@ -504,6 +504,7 @@ class BackgroundProcessor(Processor):
 
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
+        #cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         return frame
         if self.avg_background is None:
             self.avg_background = np.empty(frame.shape, dtype=np.uint32)
@@ -524,6 +525,7 @@ class BackgroundProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         #return np.maximum(frame - self._background, self._blank)
+        cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         return frame
 
 class TrackerProcessor(Processor):
@@ -537,7 +539,7 @@ class TrackerProcessor(Processor):
             return self._tracking
 
 
-    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=1, detectLines = True, readDials = True):
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True):
         super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
         self.labels = {}
@@ -728,27 +730,37 @@ class TrackerProcessor(Processor):
         if name == 'line-segmentation':
             frame = self.lineDetector.threshold_background(frame)
             return frame
+
+        source_position_unscaled = (frame.shape[1],round(frame.shape[0]*.5))
+        cv2.circle(frame,source_position_unscaled, 10, (0,0, 255), -1)#draw one red dot for the source position
         for i,t in enumerate(self._tracking):
             if(t['observed'] < 3):
                 continue
             bbox = t['bbox']
-            draw_rectangle(frame, bbox, (0,0,255), 1)
-            center = t['center_scaled']
-            center_pos = np.array(center)
-            cv2.circle(frame,tuple(self._unscale(center_pos,frame.shape)), 10, (0,0, 255), -1)
-            source_position_unscaled = (frame.shape[1],round(frame.shape[0]*.5))
-            cv2.circle(frame,source_position_unscaled, 10, (0,0, 255), -1)
+            draw_rectangle(frame, bbox, (0,0,255), 1)#draw bounding box of polygon TODO: get this to ignore outlier keypoints
+            polygon = t['poly']
+            #Find the center of the polygon border of the tracked object.
+            #taken from https://www.pyimagesearch.com/2016/02/01/opencv-center-of-contour/
+            moment = cv2.moments(polygon)
+
+            centerX = moment['m10'] / moment['m00']
+            centerY = moment['m01'] / moment['m00']
+            #center = t['center_scaled']
+            center_pos = tuple((int(centerX), int(centerY))) #TODO: CHANGE t['center_pos'] to THIS VALUE INSTEAD!!!
+            t['center_scaled'] = scale_point(center_pos, frame)
+            #print('the center position is {}'.format(center_pos))
+            cv2.circle(frame,center_pos, 10, (0,0, 255), -1)#draw red dots at centers of each polygon
             #draw the inner and outer dist thresholds for linefinding
             dist_th_upper = 200 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
             dist_th_lower = 75 # to account for the size of the reactor
-            cv2.circle(frame, tuple(self._unscale(center_pos,frame.shape)), dist_th_lower, (0,255, 255), 3)#BGR for yellow
-            cv2.circle(frame, tuple(self._unscale(center_pos,frame.shape)), dist_th_upper, (255,255, 0), 3)#BGR for cyan
+            cv2.circle(frame, center_pos, dist_th_lower, (0,255, 255), 3)#BGR for yellow
+            cv2.circle(frame, center_pos, dist_th_upper, (255,255, 0), 3)#BGR for cyan
             #now draw polygon
             cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
 
             #put note about it
             cv2.putText(frame,
-                        '{}: {}'.format(t['name'], t['observed']),
+                        '{}: {}'.format(t['name'], t['observed']),#For some reason we're counting above 600 on some of these 'labels'... need to see why
                         (0, 60 * (i+ 1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
 
@@ -791,7 +803,7 @@ class TrackerProcessor(Processor):
                 #update polygon and bounding box and very different
                 if intersection < 0.55:
                     # reduce the size of the bbox by 5% so it has less of a chance of including the reactor image in its initial polygon
-                    scaled_center = rect_scaled_center(bbox,frame)
+                    scaled_center = rect_scaled_center(bbox,frame)#scaled means "From 0 to 1", unscaled means "In raw pixel coordinates"
                     #bbox_p = stretch_rectangle(bbox, frame, .95)
                     t['center_scaled'] = scaled_center
                     t['poly'] = poly
@@ -1158,7 +1170,7 @@ class DetectionProcessor(Processor):
 
         self._ready = True
         self.features = {}
-        self.threshold = threshold
+        self.threshold = threshold#this is the percentage of distance similarity
         self.min_match = min_match
         self.weights = weights
         self.stretch_boxes=1.5
@@ -1338,7 +1350,9 @@ class LineDetectionProcessor(Processor):
     def __init__(self, camera, stride, background, obsLimit = 7):
         super().__init__(camera, ['image-segmented','lines-detected'],stride)
         self._lines = [] # initialize as an empty array - list of dicts that contain endpoints, slope, intercept
-        self._background = cv2.bilateralFilter(background, 7, 150, 150) # preprocess the background image to help with raster noise
+        # preprocess the background image to help with raster noise
+        #cv2.bilateralFilter(background, 7, 150, 150) #switched to median b/c bilateral preserves edges which is not what we want
+        self._background = cv2.medianBlur(background, 5)
         self._ready = True
         self._observationLimit = obsLimit # how many failed calculations/countdowns until we remove a line
         self._stagedLines = [] # lines that were detected in the previous call to process_frame.  if they are detected again, add them to the main line list

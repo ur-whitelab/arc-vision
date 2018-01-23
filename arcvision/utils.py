@@ -130,10 +130,10 @@ def rect_view(frame, rect):
 
 def keypoints_view(desc, frame, rect):
     '''return the keypoints limited to a region'''
-    rect = stretch_rectangle(rect, frame)
+    rect = stretch_rectangle(rect, frame)#embiggen the rectangle by 1.2x
 
-    frame_view = rect_view(frame, rect)
-    kp, des = desc.detectAndCompute(frame_view,None)
+    frame_view = rect_view(frame, rect)#restrict area of interest to the embiggened rectangle
+    kp, des = desc.detectAndCompute(frame_view,None)#get the keypoints in that region
     #need to transform the key points back
     for i in range(len(kp)):
         kp[i].pt = (rect[0] + kp[i].pt[0], rect[1] + kp[i].pt[1])
@@ -154,6 +154,12 @@ def intersecting(a, b):
         if(minArea > 0):
             return intArea / minArea
     return None
+
+def scale_point(point, frame):
+    '''Takes in a point as a tuple of ints and returns a list of floats in scaled coordinates (0 to 1)'''
+    x = float(point[0])/frame.shape[1]
+    y = float(point[1])/frame.shape[0]
+    return [x,y]
 
 def rect_scaled_center(rect, frame):
     x = (rect[0] + rect[2] / 2) / frame.shape[1]

@@ -55,15 +55,15 @@ class Controller:
                          'pause': False,
                          'descriptor': 'AKAZE',
                          'descriptor_threshold': 0.0002,
-                         'descriptor_threshold_bounds': (0.00001,0.01),
-                         'descriptor_threshold_step': 0.00005}
+                         'descriptor_threshold_bounds': (0.00005,0.01),
+                         'descriptor_threshold_step': 0.0005}
         self.modes = ['background',
                       'detection',
                       'training',
                       'colors',
                       'calibration']
-        self.descriptors = ['AKAZE', 'BRISK' , 'KAZE']
-        self.descriptor = cv2.AKAZE_create()
+        self.descriptors = ['AKAZE', 'SURF', 'BRISK' , 'KAZE']
+        self.descriptor = cv2.AKAZE_create()#self.descriptor = cv2.xfeatures2d.SURF_create(400)#
         self.processors = []
         self.reserved_processors = []
         self.background = None
@@ -187,7 +187,7 @@ class Controller:
                 # we lost background, so switch modes
                 self.background = np.zeros(self.cam.get_frame().shape, np.uint8)
                 self.processors[0].background = self.background
-
+        #Set up the descriptor drop-downs
         if 'descriptor' in settings and (settings['descriptor'] != self.settings['descriptor'] or settings['descriptor_threshold'] != self.settings['descriptor_threshold']):
             desc = settings['descriptor']
             if desc == 'BRISK':
@@ -214,6 +214,14 @@ class Controller:
                 self.descriptor = cv2.KAZE_create(threshold=self.settings['descriptor_threshold'])
                 self.settings['descriptor_threshold_bounds'] = (0.00005, 0.005)
                 self.settings['descriptor_threshold_step'] = 0.00005
+            elif desc == 'SURF':
+                if settings['descriptor_threshold'] == 0:
+                    self.settings['descriptor_threshold'] = 200
+                else:
+                    self.settings['descriptor_threshold'] = int(settings['descriptor_threshold'])
+                self.descriptor = cv2.cv2.xfeatures2d.SURF_create(threshold=self.settings['descriptor_threshold'])
+                self.settings['descriptor_threshold_bounds'] = (200, 10000)
+                self.settings['descriptor_threshold_step'] = 50
             else:
                 desc = self.settings['descriptor']
 
