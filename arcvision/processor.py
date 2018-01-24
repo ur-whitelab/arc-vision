@@ -544,6 +544,8 @@ class TrackerProcessor(Processor):
         self._tracking = []
         self.labels = {}
         self.stride = stride
+        self.dist_th_upper = 150 # distance upper threshold, in pixels
+        self.dist_th_lower = 75 # to account for the size of the reactor
         # set up line detector
         if detectLines:
              self.lineDetector = LineDetectionProcessor(camera,stride*2,background)
@@ -634,8 +636,6 @@ class TrackerProcessor(Processor):
         #source_position_unscaled = self._unscale_point(source_position_scaled, frameSize)
         source_dist_thresh_upper = 200
         source_dist_thresh_lower = 10
-        dist_th_upper = 300 # distance upper threshold, in pixels
-        dist_th_lower = 100 # to account for the size of the reactor
         used_lines = []
         for i,t1 in enumerate(self._tracking):
             center = self._unscale_point(t1['center_scaled'], frameSize)
@@ -648,7 +648,7 @@ class TrackerProcessor(Processor):
                 dist_ep2 = distance_pts((center, line['endpoints'][1]))
                 nearbyEndpointFound = False
                 #print('Distances for {} {} (position {}) to the endpoints are {} (position {}) and {} (position {})'.format(t1['label'], t1['id'], center, min(dist_ep1,dist_ep2), line['endpoints'][0], max(dist_ep1,dist_ep2), line['endpoints'][1]))
-                if (val_in_range(dist_ep1,dist_th_lower,dist_th_upper) or val_in_range(dist_ep2,dist_th_lower,dist_th_upper)):
+                if (val_in_range(dist_ep1,self.dist_th_lower,self.dist_th_upper) or val_in_range(dist_ep2,self.dist_th_lower,self.dist_th_upper)):
                     # we have a connection! use the endpoint that is further away to find another object thats close to it
 
                     if (dist_ep1 <= dist_ep2):
@@ -693,7 +693,7 @@ class TrackerProcessor(Processor):
                         if angleDiff > angleThresh:
                             continue
                         dist2 = distance_pts((center2, endpoint))
-                        if (val_in_range(dist2, dist_th_lower,dist_th_upper)):
+                        if (val_in_range(dist2, self.dist_th_lower,self.dist_th_upper)):
                             # its a connection! list this one as a connection, then break out of this loop
                             # we can create directionality by having two lists
                             # figure out which one is further to the left by checking the which x coordinate is greater (counter-intuitive, but the camera view is flipped)
@@ -741,10 +741,8 @@ class TrackerProcessor(Processor):
             #print('the center position is {}'.format(center_pos))
             cv2.circle(frame,center_pos, 10, (0,0, 255), -1)#draw red dots at centers of each polygon
             #draw the inner and outer dist thresholds for linefinding
-            dist_th_upper = 200 # distance upper threshold, in pixels #TODO: update this and see if we can do this in a scaled fashion
-            dist_th_lower = 75 # to account for the size of the reactor
-            cv2.circle(frame, center_pos, dist_th_lower, (0,255, 255), 2)#BGR for yellow
-            cv2.circle(frame, center_pos, dist_th_upper, (255,255, 0), 2)#BGR for cyan
+            cv2.circle(frame, center_pos, self.dist_th_lower, (0,255, 255), 2)#BGR for yellow
+            cv2.circle(frame, center_pos, self.dist_th_upper, (255,255, 0), 2)#BGR for cyan
             #now draw polygon
             cv2.polylines(frame,[t['poly']], True, (0,0,255), 3)# + t['delta']
 
@@ -1343,7 +1341,7 @@ class LineDetectionProcessor(Processor):
         self._lines = [] # initialize as an empty array - list of dicts that contain endpoints, slope, intercept
         # preprocess the background image to help with raster noise
         #cv2.bilateralFilter(background, 7, 150, 150) #switched to median b/c bilateral preserves edges which is not what we want
-        self._background = cv2.GaussianBlur(cv2.medianBlur(background, 5), (7,7), 0)
+        self._background = cv2.blur(cv2.medianBlur(background, 5), (7,7))
         self._ready = True
         self._observationLimit = obsLimit # how many failed calculations/countdowns until we remove a line
         self._stagedLines = [] # lines that were detected in the previous call to process_frame.  if they are detected again, add them to the main line list
