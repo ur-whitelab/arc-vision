@@ -571,7 +571,6 @@ class TrackerProcessor(Processor):
             t['connectedToSource'] = False
             status,bbox = t['tracker'].update(frame)
             t['observed'] -= 1
-            poly = t['poly']
 
             # if (self.ticks % 50 == 0):
             #     print('Original scaled center of bbox was {}, tracker updated it to find {}'.format(rect_scaled_center(t['bbox'], frame), rect_scaled_center(bbox, frame)))
@@ -584,23 +583,22 @@ class TrackerProcessor(Processor):
                 else:
                     areaDiff = 0
                 # experimental value: if the size has changed by more than 15%, count that as a failed observation
-                dist = distance_pts([t['center_scaled'], poly_scaled_center(poly, frame)])
+                dist = distance_pts([t['center_scaled'], poly_scaled_center(t['poly'], frame)])
                 # check if its new location is a reflection, or drastically far away
                 # if it moved some radical distance, reinitialize the tracker on the original frame
-                # if (dist > 0.03):
-                #     t['tracker'].init(frame, t['bbox'])
-                if (areaDiff >= .15 or dist > .03):
-                    t['observed'] -= 1
-                    #print('Area difference is {}, counting as null observation'.format(areaDiff))
-                else:
+                if (dist > 0.03):
+                     t['tracker'].init(frame, t['bbox'])
+                if (areaDiff <= .15 and dist < .03):
                     #print('Updated distance is {}'.format(dist))
                     # rescale the bbox to match the original area?
                     scaleFactor = t['area_init']/rect_area(bbox)
                     bbox_p = stretch_rectangle(bbox, frame, scaleFactor)
                     t['delta'][0] = bbox[0] - t['init'][0] # we should use delta somewhere.
                     t['delta'][1] = bbox[1] - t['init'][1]
-                    t['bbox'] = bbox
-                    t['center_scaled'] = poly_scaled_center(poly, frame)
+                    t['poly'] = t['poly'] + t['delta']
+                    t['bbox'] = bbox_p
+                    t['init'] = bbox
+                    t['center_scaled'] = poly_scaled_center(t['poly'], frame)
                     t['observed'] += 1
 
 
@@ -739,14 +737,6 @@ class TrackerProcessor(Processor):
                 continue
             bbox = t['bbox']
             draw_rectangle(frame, bbox, (0,0,255), 1)#draw bounding box of polygon TODO: get this to ignore outlier keypoints
-            polygon = t['poly']
-            #Find the center of the polygon border of the tracked object.
-            #taken from https://www.pyimagesearch.com/2016/02/01/opencv-center-of-contour/
-            #moment = cv2.moments(polygon)
-
-            #centerX = moment['m10'] / moment['m00']
-            #centerY = moment['m01'] / moment['m00']
-            #center = t['center_scaled']
             center_pos = tuple(np.array(self._unscale_point(t['center_scaled'], frame.shape)).astype(np.int32))
             #print('the center position is {}'.format(center_pos))
             cv2.circle(frame,center_pos, 10, (0,0, 255), -1)#draw red dots at centers of each polygon
@@ -756,11 +746,11 @@ class TrackerProcessor(Processor):
             cv2.circle(frame, center_pos, dist_th_lower, (0,255, 255), 2)#BGR for yellow
             cv2.circle(frame, center_pos, dist_th_upper, (255,255, 0), 2)#BGR for cyan
             #now draw polygon
-            cv2.polylines(frame,[t['poly'] + t['delta']], True, (0,0,255), 3)
+            cv2.polylines(frame,[t['poly']], True, (0,0,255), 3)# + t['delta']
 
             #put note about it
             cv2.putText(frame,
-                        '{}: {}'.format(t['name'], t['observed']),#For some reason we're counting above 600 on some of these 'labels'... need to see why
+                        '{}: {}'.format(t['name'], t['observed']),
                         (0, 60 * (i+ 1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
 
@@ -1353,7 +1343,7 @@ class LineDetectionProcessor(Processor):
         self._lines = [] # initialize as an empty array - list of dicts that contain endpoints, slope, intercept
         # preprocess the background image to help with raster noise
         #cv2.bilateralFilter(background, 7, 150, 150) #switched to median b/c bilateral preserves edges which is not what we want
-        self._background = cv2.GaussianBlur(cv2.medianBlur(background, 5), (7,7), 2)
+        self._background = cv2.GaussianBlur(cv2.medianBlur(background, 5), (7,7), 0)
         self._ready = True
         self._observationLimit = obsLimit # how many failed calculations/countdowns until we remove a line
         self._stagedLines = [] # lines that were detected in the previous call to process_frame.  if they are detected again, add them to the main line list
