@@ -166,6 +166,14 @@ def rect_scaled_center(rect, frame):
     y = (rect[1] + rect[3] / 2) / frame.shape[0]
     return [x,y]
 
+def poly_scaled_center(polygon, frame):
+    #Find the scaled center of a cv2 polygon.
+    #taken from https://www.pyimagesearch.com/2016/02/01/opencv-center-of-contour/
+    moment = cv2.moments(polygon)
+    centerX = moment['m10'] / moment['m00'] / frame.shape[1]
+    centerY = moment['m01'] / moment['m00'] / frame.shape[0]
+    return [centerX, centerY]
+
 def rect_area(rect):
     return (abs(rect[0]- rect[2])* abs(rect[1] -rect[3]))
 
