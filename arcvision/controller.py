@@ -200,7 +200,7 @@ class Controller:
                 self.settings['descriptor_threshold_step'] = 1
             elif desc == 'AKAZE':
                 if settings['descriptor_threshold'] == 0:
-                    self.settings['descriptor_threshold'] = 0.0001
+                    self.settings['descriptor_threshold'] = 0.00001
                 else:
                     self.settings['descriptor_threshold'] = float(settings['descriptor_threshold'])
                 self.descriptor = cv2.AKAZE_create(threshold=self.settings['descriptor_threshold'])
