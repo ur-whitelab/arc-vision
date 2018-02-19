@@ -571,7 +571,7 @@ class TrackerProcessor(Processor):
             t['connectedToPrimary'] = [] # list of tracked objects it is connected to as the primary/source node
             t['connectedToSecondary'] = []
             t['connectedToSource'] = False
-            status,bbox = t['tracker'].update(frame)
+            status,bbox = t['tracker'].update(cv2.UMat(frame))
             t['observed'] -= 1
 
             # if (self.ticks % 50 == 0):
@@ -589,7 +589,7 @@ class TrackerProcessor(Processor):
                 # check if its new location is a reflection, or drastically far away
                 # if it moved some radical distance, reinitialize the tracker on the original frame
                 if (dist > 0.03):
-                     t['tracker'].init(frame, t['bbox'])
+                     t['tracker'].init(cv2.UMat(frame), t['bbox'])
                 if (areaDiff <= .15 and dist < .03):
                     #print('Updated distance is {}'.format(dist))
                     # rescale the bbox to match the original area?
@@ -791,7 +791,7 @@ class TrackerProcessor(Processor):
                 #update polygon and bounding box and very different
                 if intersection < 0.55:
                     # reduce the size of the bbox by 5% so it has less of a chance of including the reactor image in its initial polygon
-                    scaled_center = rect_scaled_center(bbox,frame)#scaled means "From 0 to 1", unscaled means "In raw pixel coordinates"
+                    #scaled_center = rect_scaled_center(bbox,frame)#scaled means "From 0 to 1", unscaled means "In raw pixel coordinates"
                     #bbox_p = stretch_rectangle(bbox, frame, .95)
                     t['poly'] = poly
                     t['center_scaled'] = poly_scaled_center(poly, frame)
@@ -799,13 +799,13 @@ class TrackerProcessor(Processor):
                     t['delta'] = np.int32([0,0])
                     t['area_init'] = rect_area(bbox)
                     t['tracker'] = cv2.TrackerMedianFlow_create()
-                    t['tracker'].init(frame, bbox)
+                    t['tracker'].init(cv2.UMat(frame), bbox)
                 return
 
 
         name = '{}-{}'.format(label, id_num)
         tracker = cv2.TrackerMedianFlow_create()
-        status = tracker.init(frame, bbox)
+        status = tracker.init(cv2.UMat(frame), bbox)
 
         if not status:
             print('Failed to initialize tracker')
@@ -876,7 +876,7 @@ class SegmentProcessor(Processor):
     def _process_frame(self, frame, frame_ind):
         bg = self._filter_background(frame)
         dist_transform = self._filter_distance(bg)
-        self.rect_iter = self._filter_contours(dist_transform)
+        self.rect_iter = self._filter_contours(dist_transform, frame.shape)
         return frame
 
     def segments(self, frame = None):
@@ -887,32 +887,32 @@ class SegmentProcessor(Processor):
 
     def _filter_background(self, frame, name = ''):
 
-        img = frame.copy()
+        img = frame#.copy()
         #if(frame.shape == self.background.shape):
         #    img -= self.background
 
         if name == 'background-subtract':
             return img
-        gray = img
+        gray = cv2.UMat(img)
         if self.channel is None:
             if len(img.shape) == 3 and img.shape[2] == 3:
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
         else:
-            gray = cv2.inRange(img, self.hsv_min, self.hsv_max)
-        gray = cv2.blur(gray, (3,3))
+            gray = cv2.inRange(gray, self.hsv_min, self.hsv_max)
+        gray = cv2.blur(gray, (5,5))
         if name == 'background-filter-blur':
             return gray
-        ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         #bg = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         #                                cv2.THRESH_BINARY_INV,11,2)
-        if np.mean(bg) > 255 // 2:
-           bg = 255 - bg
+        if np.mean(cv2.mean(bg)) > 255 // 2:
+           bg = cv2.subtract(bg, 255)
 
         if name == 'background-thresh':
             return bg
         # noise removal
         kernel = np.ones((4,4),np.uint8)
-        bg = cv2.erode(bg, kernel, iterations = 2)
+        bg = cv2.erode(bg, kernel, iterations = 1)
         if name == 'background-erode':
             return bg
         bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 1)
@@ -926,7 +926,7 @@ class SegmentProcessor(Processor):
         dist_transform = cv2.normalize(dist_transform, dist_transform, 0, 255, cv2.NORM_MINMAX)
 
         #create distance tranform contours
-        dist_transform = np.uint8(dist_transform)
+        dist_transform = np.uint8(cv2.UMat.get(dist_transform))
         return dist_transform
 
     def _filter_ws_markers(self, frame):
@@ -942,7 +942,7 @@ class SegmentProcessor(Processor):
         cv2.circle(markers, (5,5), 3, (255,))
         return markers.astype(np.int32)
 
-    def _filter_contours(self, frame, return_contour=False):
+    def _filter_contours(self, frame, frame_shape, return_contour=False):
         _, contours, _ = cv2.findContours(frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         def sort_key(c):
             '''The area of bounding rectangle'''
@@ -956,7 +956,7 @@ class SegmentProcessor(Processor):
             #flip around our rectangle
             # exempt small or large rectangles
             if(r[2] * r[3] < 250 or \
-                r[2] * r[3] / frame.shape[0] / frame.shape[1] > self.max_rectangle ):
+                r[2] * r[3] / frame_shape[0] / frame_shape[1] > self.max_rectangle ):
                 continue
             if not return_contour:
                 yield r
@@ -1039,7 +1039,7 @@ class SegmentProcessor(Processor):
             return dist_transform
 
         if name == 'boxes':
-            for rect in self._filter_contours(dist_transform):
+            for rect in self._filter_contours(dist_transform, frame.shape):
                 draw_rectangle(frame, rect, (255, 255, 0), 1)
         if name == 'watershed':
             markers = self._filter_ws_markers(dist_transform)
