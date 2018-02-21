@@ -200,7 +200,7 @@ class SpatialCalibrationProcessor(Processor):
         #stay should be bigger than delay
         #stay is how long the calibration dot stays in one place (?)
         #delay is how long we wait before reading its position
-        self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.05, channel=channel, name='SpatialSegmenter')
+        self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.25, channel=channel, name='SpatialSegmenter')
         super().__init__(camera, ['calibration', 'transform'], stride)
         self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
 
@@ -831,7 +831,7 @@ class TrackerProcessor(Processor):
         return True
 
 class SegmentProcessor(Processor):
-    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 110, 16], name=None):
+    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 110, 16], name=None):#TODO: mess with this max_rectangle and see if that helps the big bbox isues
         '''Pass stride = -1 to only process on request'''
         super().__init__(camera, [
 
@@ -942,13 +942,14 @@ class SegmentProcessor(Processor):
         cv2.circle(markers, (5,5), 3, (255,))
         return markers.astype(np.int32)
 
+    def sort_key(self, c):
+        '''Get the area of a bounding rectangle'''
+        rect = cv2.boundingRect(c)
+        return rect[2] * rect[3]
+
     def _filter_contours(self, frame, frame_shape, return_contour=False):
         _, contours, _ = cv2.findContours(frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        def sort_key(c):
-            '''The area of bounding rectangle'''
-            rect = cv2.boundingRect(c)
-            return rect[2] * rect[3]
-        contours.sort(key = sort_key, reverse=True)
+        contours.sort(key = self.sort_key, reverse=True)
         rects = [cv2.boundingRect(c) for c in contours]
         segments = 0
 
@@ -1039,7 +1040,7 @@ class SegmentProcessor(Processor):
             return dist_transform
 
         if name == 'boxes':
-            for rect in self._filter_contours(dist_transform, frame.shape):
+            for rect in self.rect_iter:#self._filter_contours(dist_transform, frame.shape):
                 draw_rectangle(frame, rect, (255, 255, 0), 1)
         if name == 'watershed':
             markers = self._filter_ws_markers(dist_transform)
