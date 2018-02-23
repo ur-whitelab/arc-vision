@@ -96,15 +96,15 @@ class Camera:
                     'Processor {} modified frame channel from {} to {}'.format(type(p), start_dims, self.frame.shape)
             #if we are updating the decorated frame, then we must
             if(i < self.decorate_index and update_decorated):
-                decorated_frame = await p.decorate_frame(decorated_frame, self.decorate_name)
+                decorated_frame = await p.decorate_frame(frame, self.decorate_name)
 
                 # lots of steps, if we lose color channel add it back
                 #if(len(decorated_frame.shape) == 2):
                 #    decorated_frame = cv2.cvtColor(decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
-                if decorated_frame is not None:
+                if decorated_frame is None:
                     'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
-                    decorate_frame = frame
+                    decorated_frame = frame
 
         if update_decorated:
             self.decorated_frame = decorated_frame

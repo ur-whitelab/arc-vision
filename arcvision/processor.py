@@ -184,7 +184,7 @@ class ColorCalibrationProcessor(Processor):
                     '{}'.format(color),
                     (r[0] + 5, r[1] + r[3] // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
-        return frame
+        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
 
@@ -200,7 +200,7 @@ class SpatialCalibrationProcessor(Processor):
         #stay should be bigger than delay
         #stay is how long the calibration dot stays in one place (?)
         #delay is how long we wait before reading its position
-        self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.25, channel=channel, name='SpatialSegmenter')
+        self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.25, channel=channel, name='Spatial')
         super().__init__(camera, ['calibration', 'transform'], stride)
         self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
 
@@ -434,7 +434,7 @@ class SpatialCalibrationProcessor(Processor):
                 'Homography Fit: {}'.format(self.fit),
                 (100, 250),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,124,255))
-        return frame
+        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     @property
     def objects(self):
@@ -585,7 +585,8 @@ class TrackerProcessor(Processor):
                 else:
                     areaDiff = 0
                 # experimental value: if the size has changed by more than 15%, count that as a failed observation
-                dist = distance_pts([t['center_scaled'], poly_scaled_center(t['poly'], frame)])
+                center = poly_scaled_center(t['poly'], frame) if cv2.contourArea(t['poly']) < rect_area(bbox) else rect_scaled_center(bbox, frame)
+                dist = distance_pts([t['center_scaled'], center])
                 # check if its new location is a reflection, or drastically far away
                 # if it moved some radical distance, reinitialize the tracker on the original frame
                 if (dist > 0.03):
@@ -600,7 +601,7 @@ class TrackerProcessor(Processor):
                     t['poly'] = t['poly'] + t['delta']
                     t['bbox'] = bbox_p
                     t['init'] = bbox
-                    t['center_scaled'] = poly_scaled_center(t['poly'], frame)
+                    t['center_scaled'] = poly_scaled_center(t['poly'], frame) if cv2.contourArea(t['poly']) < rect_area(bbox_p) else rect_scaled_center(bbox_p, frame)
                     t['observed'] += 1
 
 
@@ -725,10 +726,10 @@ class TrackerProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         if name != 'track':
-            return frame
+            return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if name == 'line-segmentation':
             frame = self.lineDetector.threshold_background(frame)
-            return frame
+            return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         source_position_unscaled = (frame.shape[1],round(frame.shape[0]*.5))
         cv2.circle(frame,source_position_unscaled, 10, (0,0, 255), -1)#draw one red dot for the source position
@@ -760,7 +761,7 @@ class TrackerProcessor(Processor):
                 cv2.circle(frame, (endpoints[0][0],endpoints[0][1]), 3 , (255,0,0), -1)#BGR
                 cv2.circle(frame, (endpoints[1][0],endpoints[1][1]), 3 , (0,255,0), -1)#BGR
 
-        return frame
+        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def track(self, frame, bbox, poly, label, id_num, temperature = 298):
         '''
@@ -794,11 +795,15 @@ class TrackerProcessor(Processor):
                     #scaled_center = rect_scaled_center(bbox,frame)#scaled means "From 0 to 1", unscaled means "In raw pixel coordinates"
                     #bbox_p = stretch_rectangle(bbox, frame, .95)
                     t['poly'] = poly
-                    t['center_scaled'] = poly_scaled_center(poly, frame)
+                    t['center_scaled'] = poly_scaled_center(t['poly'], frame) if cv2.contourArea(t['poly']) < rect_area(bbox) else rect_scaled_center(bbox, frame)
                     t['init'] = bbox
                     t['delta'] = np.int32([0,0])
                     t['area_init'] = rect_area(bbox)
-                    t['tracker'] = cv2.TrackerMedianFlow_create()
+                    #cv2.TrackerKCF_create() is too drifty and doesn't "lose" objects once they're gone...
+                    #cv2.TrackerMIL_create() #this one seems to work best with motion
+                    #cv2.TrackerTLD_create() #this tracks OK after faster motion but gets doubling and isn't very robust.
+                    #cv2.TrackerMedianFlow_create()#median flow doesn't handle big movement...
+                    t['tracker'] = cv2.TrackerMIL_create()
                     t['tracker'].init(cv2.UMat(frame), bbox)
                 return
 
@@ -819,7 +824,7 @@ class TrackerProcessor(Processor):
                      'poly': poly,
                      'init': bbox,
                      'area_init':rect_area(bbox),
-                     'center_scaled': poly_scaled_center(poly, frame),
+                     'center_scaled': poly_scaled_center(poly, frame) if cv2.contourArea(poly) < rect_area(bbox) else rect_scaled_center(bbox, frame),
                      'bbox': bbox,
                      'observed': self.ticks_per_obs,
                      'start': self.ticks,
@@ -833,16 +838,20 @@ class TrackerProcessor(Processor):
 class SegmentProcessor(Processor):
     def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 110, 16], name=None):#TODO: mess with this max_rectangle and see if that helps the big bbox isues
         '''Pass stride = -1 to only process on request'''
+        if(name is None):
+            name_str = ''
+        else:
+            name_str = name
         super().__init__(camera, [
 
-                                  'background-subtract',
-                                  'background-filter-blur',
-                                  'background-thresh',
-                                  'background-erode',
-                                  'background-open',
-                                  'distance',
-                                  'boxes',
-                                  'watershed'
+                                  name_str + 'bg-subtract',
+                                  name_str + 'bg-filter-blur',
+                                  name_str + 'bg-thresh',
+                                  name_str + 'bg-erode',
+                                  name_str + 'bg-open',
+                                  name_str + 'distance',
+                                  name_str + 'boxes',
+                                  name_str + 'watershed'
                                   ], max(1, stride), name=name)
         self.rect_iter = range(0)
         self.background = background
@@ -888,10 +897,11 @@ class SegmentProcessor(Processor):
     def _filter_background(self, frame, name = ''):
 
         img = frame#.copy()
+        #print('frame is type {} and self.background is type {}'.format(frame, self.background))
         #if(frame.shape == self.background.shape):
-        #    img -= self.background
+        #    img = cv2.subtract(img, self.background)
 
-        if name == 'background-subtract':
+        if name.find('bg-subtract') != -1:
             return img
         gray = cv2.UMat(img)
         if self.channel is None:
@@ -900,7 +910,7 @@ class SegmentProcessor(Processor):
         else:
             gray = cv2.inRange(gray, self.hsv_min, self.hsv_max)
         gray = cv2.blur(gray, (5,5))
-        if name == 'background-filter-blur':
+        if name.find('bg-filter-blur') != -1:
             return gray
         ret, bg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         #bg = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -908,15 +918,15 @@ class SegmentProcessor(Processor):
         if np.mean(cv2.mean(bg)) > 255 // 2:
            bg = cv2.subtract(bg, 255)
 
-        if name == 'background-thresh':
+        if name.find('bg-thresh') != -1:
             return bg
         # noise removal
         kernel = np.ones((4,4),np.uint8)
         bg = cv2.erode(bg, kernel, iterations = 1)
-        if name == 'background-erode':
+        if name.find('bg-erode') != -1:
             return bg
         bg = cv2.morphologyEx(bg,cv2.MORPH_OPEN,kernel, iterations = 1)
-        if name == 'background-open':
+        if name.find('bg-open') != -1:
             return bg
 
         return bg
@@ -1032,7 +1042,7 @@ class SegmentProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         bg = self._filter_background(frame, name)
-        if name.find('background') != -1:
+        if name.find('bg') != -1:
             return bg
 
         dist_transform = self._filter_distance(bg)
@@ -1046,7 +1056,7 @@ class SegmentProcessor(Processor):
             markers = self._filter_ws_markers(dist_transform)
             ws_markers = cv2.watershed(frame, markers)
             frame[ws_markers == -1] = (255, 0, 0)
-        return frame
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
 class TrainingProcessor(Processor):
@@ -1110,7 +1120,7 @@ class TrainingProcessor(Processor):
                 cv2.polylines(frame_view, [p], True, (60, 60, 60), 1)
             cv2.polylines(frame_view, [self.poly], True, (0, 0, 255), 3)
 
-        return frame
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def capture(self, frame, label):
         '''Capture and store the current image'''
@@ -1128,7 +1138,7 @@ class TrainingProcessor(Processor):
         self._objects = [{
             'bbox': self.rect,
             'poly': self.poly,
-            'center_scaled': poly_scaled_center(self.poly, frame),
+            'center_scaled': poly_scaled_center(self.poly, frame) if cv2.contourArea(self.poly) < rect_area(self.rect) else rect_scaled_center(self.rect, frame),
             'label': label,
             'id': object_id()
         }]
@@ -1239,7 +1249,7 @@ class DetectionProcessor(Processor):
                             (f['rect'][0], f['rect'][1]),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, color)
 
-        return frame
+        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     async def _identify_features(self, frame, frame_ind):
         self._ready = False
@@ -1359,11 +1369,11 @@ class LineDetectionProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         if name != 'image-segmented' or name != 'lines-detected':
-            return frame
+            return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         if name == 'image-segmented':
             frame = self.threshold_background(frame)
-            return frame
+            return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # if name == 'lines-detected':
         #     print('Adding the points')
@@ -1372,7 +1382,7 @@ class LineDetectionProcessor(Processor):
             cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
             cv2.circle(frame, (lines[i][1][0], lines[i][1][1]), (255,0,255),-1)
 
-        return frame
+        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
     '''

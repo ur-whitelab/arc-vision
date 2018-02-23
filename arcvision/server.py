@@ -66,7 +66,7 @@ class StreamHandler(tornado.web.RequestHandler):
                 self.write("Content-length: %s\r\n\r\n" % len(img))
                 self.write(img)
                 await tornado.gen.Task(self.flush)
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.2)
 
 class TemplateHandler(tornado.web.RequestHandler):
     '''Serves template images'''

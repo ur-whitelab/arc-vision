@@ -120,7 +120,7 @@ def stretch_rectangle(rect, frame, stretch=1.2):
     rect[1] = max(rect[1], 0)
     rect[2] = min(frame.shape[1], rect[2])
     rect[3] = min(frame.shape[0], rect[3])
-    return rect
+    return tuple(rect)
 
 def rect_view(frame, rect):
     '''Use a bounding rectangle to create a view of a frame'''
