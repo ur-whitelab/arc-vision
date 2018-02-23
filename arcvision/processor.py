@@ -546,6 +546,7 @@ class TrackerProcessor(Processor):
         self.stride = stride
         self.dist_th_upper = 150 # distance upper threshold, in pixels
         self.dist_th_lower = 75 # to account for the size of the reactor
+        self.max_obs_possible = 24
         # set up line detector
         if detectLines:
              self.lineDetector = LineDetectionProcessor(camera,stride*2,background)
@@ -602,7 +603,7 @@ class TrackerProcessor(Processor):
                     t['bbox'] = bbox_p
                     t['init'] = bbox
                     t['center_scaled'] = poly_scaled_center(t['poly'], frame) if cv2.contourArea(t['poly']) < rect_area(bbox_p) else rect_scaled_center(bbox_p, frame)
-                    t['observed'] += 1
+                    t['observed'] = min(t['observed'] +2, self.max_obs_possible)
 
 
             # check obs counts
@@ -803,7 +804,7 @@ class TrackerProcessor(Processor):
                     #cv2.TrackerMIL_create() #this one seems to work best with motion
                     #cv2.TrackerTLD_create() #this tracks OK after faster motion but gets doubling and isn't very robust.
                     #cv2.TrackerMedianFlow_create()#median flow doesn't handle big movement...
-                    t['tracker'] = cv2.TrackerMIL_create()
+                    t['tracker'] = cv2.TrackerMIL_create()#cv2.createOptFlow_DeepFlow()
                     t['tracker'].init(cv2.UMat(frame), bbox)
                 return
 
@@ -893,17 +894,23 @@ class SegmentProcessor(Processor):
             self._process_frame(frame, 0)
         yield from self.rect_iter
 
+    '''
+        Run absDiff to subtract the background from the frame, then normalize over each color channel
+    '''
+    def absDiff_background(self,frame):
+        image_diff = cv2.absdiff(self.background, frame)
+        #sum_diff = np.sum(image_diff, 2).astype(np.uint8)
+        sum_diff = cv2.medianBlur(image_diff, 9)
+        return sum_diff
 
     def _filter_background(self, frame, name = ''):
 
         img = frame#.copy()
+        gray = cv2.UMat(img)
         #print('frame is type {} and self.background is type {}'.format(frame, self.background))
-        #if(frame.shape == self.background.shape):
-        #    img = cv2.subtract(img, self.background)
-
+        gray = self.absDiff_background(gray)#img = cv2.subtract(img, self.background)
         if name.find('bg-subtract') != -1:
             return img
-        gray = cv2.UMat(img)
         if self.channel is None:
             if len(img.shape) == 3 and img.shape[2] == 3:
                 gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)

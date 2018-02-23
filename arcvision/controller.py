@@ -88,8 +88,6 @@ class Controller:
         self.crop_processor = CropProcessor(self.cam, crop)
         self.background_processor = BackgroundProcessor(self.cam)
         self.projector_processor = Projector(self.cam, self.projector_sock)
-        self.transform_processor = SpatialCalibrationProcessor(self.cam)
-        self.reserved_processors = [self.transform_processor]
         self.processors = []
         # we're still in bootup mode, so a frame delay to collect the background won't hurt too bad
         for i in range(0,100):
@@ -98,6 +96,9 @@ class Controller:
                 self.background = frame
             else:
                 self.background = np.mean([frame, self.background], axis = 0).astype(np.uint8)
+
+        self.transform_processor = SpatialCalibrationProcessor(self.cam, background = self.background)
+        self.reserved_processors = [self.transform_processor]
 
         await self.update_settings(self.settings)
 
