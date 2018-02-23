@@ -118,7 +118,7 @@ def start_server(camera, controller, port=8888):
 
     app = tornado.web.Application([
         (r"/",HtmlPageHandler),
-        (r"/stream/([a-z\-]+).mjpg", StreamHandler, {'camera': camera}),
+        (r"/stream/([A-Za-z\-]+).mjpg", StreamHandler, {'camera': camera}),
         (r"/stats", StatsHandler, {'controller': controller}),
         (r"/settings", SettingsHandler, {'controller': controller}),
         (r"/template/(a-z\-])+", TemplateHandler, {'controller': controller})

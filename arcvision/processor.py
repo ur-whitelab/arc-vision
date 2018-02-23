@@ -184,7 +184,7 @@ class ColorCalibrationProcessor(Processor):
                     '{}'.format(color),
                     (r[0] + 5, r[1] + r[3] // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
-        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
 
@@ -434,7 +434,7 @@ class SpatialCalibrationProcessor(Processor):
                 'Homography Fit: {}'.format(self.fit),
                 (100, 250),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,124,255))
-        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     @property
     def objects(self):
@@ -525,7 +525,7 @@ class BackgroundProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         #return np.maximum(frame - self._background, self._blank)
-        cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        #cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         return frame
 
 class TrackerProcessor(Processor):
@@ -726,10 +726,10 @@ class TrackerProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         if name != 'track':
-            return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if name == 'line-segmentation':
             frame = self.lineDetector.threshold_background(frame)
-            return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         source_position_unscaled = (frame.shape[1],round(frame.shape[0]*.5))
         cv2.circle(frame,source_position_unscaled, 10, (0,0, 255), -1)#draw one red dot for the source position
@@ -761,7 +761,7 @@ class TrackerProcessor(Processor):
                 cv2.circle(frame, (endpoints[0][0],endpoints[0][1]), 3 , (255,0,0), -1)#BGR
                 cv2.circle(frame, (endpoints[1][0],endpoints[1][1]), 3 , (0,255,0), -1)#BGR
 
-        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def track(self, frame, bbox, poly, label, id_num, temperature = 298):
         '''
@@ -1056,7 +1056,7 @@ class SegmentProcessor(Processor):
             markers = self._filter_ws_markers(dist_transform)
             ws_markers = cv2.watershed(frame, markers)
             frame[ws_markers == -1] = (255, 0, 0)
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
 class TrainingProcessor(Processor):
@@ -1093,7 +1093,7 @@ class TrainingProcessor(Processor):
         self.segments = list(self.segmenter.segments(frame))
         self.rect_len = len(self.segments)
         if self.rect_index >= 0 and self.rect_index < len(self.segments):
-            self.rect = stretch_rectangle(self.segments[self.rect_index], frame)
+            self.rect = self.segments[self.rect_index]#stretch_rectangle(self.segments[self.rect_index], frame)
 
         # index 1 is poly
         self.polys = [x[0] for x in self.segmenter.polygon(frame, self.rect)]
@@ -1120,7 +1120,7 @@ class TrainingProcessor(Processor):
                 cv2.polylines(frame_view, [p], True, (60, 60, 60), 1)
             cv2.polylines(frame_view, [self.poly], True, (0, 0, 255), 3)
 
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def capture(self, frame, label):
         '''Capture and store the current image'''
@@ -1180,8 +1180,10 @@ class DetectionProcessor(Processor):
 
         # Initiate descriptors
         self.desc = descriptor
-        #set-up our matcher
-        self.matcher = cv2.BFMatcher()
+        FLANN_INDEX_KDTREE = 0
+        index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+        search_params = dict(checks=50)
+        self.matcher = cv2.FlannBasedMatcher(index_params,search_params)#cv2.BFMatcher()
 
         #create color gradient
         N = len(img_db)
@@ -1249,7 +1251,7 @@ class DetectionProcessor(Processor):
                             (f['rect'][0], f['rect'][1]),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, color)
 
-        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     async def _identify_features(self, frame, frame_ind):
         self._ready = False
@@ -1293,8 +1295,11 @@ class DetectionProcessor(Processor):
                 name = t.label
                 descriptors = t.keypoints, t.features
 
-
-                matches = self.matcher.knnMatch(descriptors[1], des, k=2)
+                if(type(descriptors[1]) != np.float32):
+                    des1 = np.float32(descriptors[1])
+                if(type(des) != np.float32):
+                    des2 = np.float32(des)
+                matches = self.matcher.knnMatch(des1, des2, k=2)
                 # store all the good matches as per Lowe's ratio test.
                 good = []
                 if(len(matches) > 1): #not sure how this happens
@@ -1369,11 +1374,11 @@ class LineDetectionProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         if name != 'image-segmented' or name != 'lines-detected':
-            return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         if name == 'image-segmented':
             frame = self.threshold_background(frame)
-            return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # if name == 'lines-detected':
         #     print('Adding the points')
@@ -1382,7 +1387,7 @@ class LineDetectionProcessor(Processor):
             cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
             cv2.circle(frame, (lines[i][1][0], lines[i][1][1]), (255,0,255),-1)
 
-        return  cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
     '''
