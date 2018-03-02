@@ -544,8 +544,10 @@ class TrackerProcessor(Processor):
         self._tracking = []
         self.labels = {}
         self.stride = stride
-        self.dist_th_upper = 150 # distance upper threshold, in pixels
-        self.dist_th_lower = 75 # to account for the size of the reactor
+        print('initializing trackerprocessor. background.shape is {} by {}'.format(background.shape[0], background.shape[1]))
+        self.dist_th_upper = int(150.0 / 720.0 * background.shape[0])# distance upper threshold, in pixels
+        self.dist_th_lower = int(75.0 / 720.0 * background.shape[0]) # to account for the size of the reactor
+        print('dist_th_upper is {} and dist_th_lower is {}'.format(self.dist_th_upper, self.dist_th_lower))
         self.max_obs_possible = 24
         # set up line detector
         if detectLines:
@@ -568,11 +570,12 @@ class TrackerProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
         delete = []
+        umat_frame = cv2.UMat(frame)
         for i,t in enumerate(self._tracking):
             t['connectedToPrimary'] = [] # list of tracked objects it is connected to as the primary/source node
             t['connectedToSecondary'] = []
             t['connectedToSource'] = False
-            status,bbox = t['tracker'].update(cv2.UMat(frame))
+            status,bbox = t['tracker'].update(umat_frame)
             t['observed'] -= 1
 
             # if (self.ticks % 50 == 0):
@@ -591,7 +594,7 @@ class TrackerProcessor(Processor):
                 # check if its new location is a reflection, or drastically far away
                 # if it moved some radical distance, reinitialize the tracker on the original frame
                 if (dist > 0.03):
-                     t['tracker'].init(cv2.UMat(frame), t['bbox'])
+                     t['tracker'].init(umat_frame, t['bbox'])
                 if (areaDiff <= .15 and dist < .03):
                     #print('Updated distance is {}'.format(dist))
                     # rescale the bbox to match the original area?
@@ -636,8 +639,9 @@ class TrackerProcessor(Processor):
         source_position_scaled = (1.0,0.5)#first coord is X from L to R, second coord is Y from TOP to BOTTOM
         source_position_unscaled = (frameSize[1],round(frameSize[0]*.5))
         #source_position_unscaled = self._unscale_point(source_position_scaled, frameSize)
-        source_dist_thresh_upper = 200
-        source_dist_thresh_lower = 10
+        source_dist_thresh_upper = int(200.0 / 720.0 * frameSize[0])
+        source_dist_thresh_lower = int(10.0 / 720.0 * frameSize[0])
+        #print('source_dist_thresh_upper is {} and framesize[1] is {}'.format(source_dist_thresh_upper, frameSize[1]))
         used_lines = []
         for i,t1 in enumerate(self._tracking):
             center = self._unscale_point(t1['center_scaled'], frameSize)
@@ -801,10 +805,10 @@ class TrackerProcessor(Processor):
                     t['delta'] = np.int32([0,0])
                     t['area_init'] = rect_area(bbox)
                     #cv2.TrackerKCF_create() is too drifty and doesn't "lose" objects once they're gone...
-                    #cv2.TrackerMIL_create() #this one seems to work best with motion
-                    #cv2.TrackerTLD_create() #this tracks OK after faster motion but gets doubling and isn't very robust.
-                    #cv2.TrackerMedianFlow_create()#median flow doesn't handle big movement...
-                    t['tracker'] = cv2.TrackerMIL_create()#cv2.createOptFlow_DeepFlow()
+                    #cv2.TrackerMIL_create() #this one seems to work with motion but is WAY too slow with GPU
+                    #cv2.TrackerTLD_create() #this tracks OK after faster motion but is also VERY slow with GPU
+                    #cv2.TrackerMedianFlow_create()#median flow doesn't handle big movement and is somewhat slow with GPU
+                    t['tracker'] = cv2.TrackerMedianFlow_create()#cv2.createOptFlow_DeepFlow()
                     t['tracker'].init(cv2.UMat(frame), bbox)
                 return
 
@@ -908,10 +912,11 @@ class SegmentProcessor(Processor):
         img = frame#.copy()
         gray = cv2.UMat(img)
         #print('frame is type {} and self.background is type {}'.format(frame, self.background))
-        gray = self.absDiff_background(gray)#img = cv2.subtract(img, self.background)
+        if(self.background is not None):
+            gray = self.absDiff_background(gray)#img = cv2.subtract(img, self.background)
         if name.find('bg-subtract') != -1:
-            return img
-        if self.channel is None:
+            return gray
+        if self.channel is None or True:
             if len(img.shape) == 3 and img.shape[2] == 3:
                 gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
         else:
@@ -1552,7 +1557,7 @@ class LineDetectionProcessor(Processor):
 
 class DialProcessor(Processor):
     ''' Class to handle sending the pressure and temperature data to the graph. Does no image processing '''
-    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 1, tempLowerBound = 298, tempUpperBound = 598, debug = False):
+    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 5, tempLowerBound = 100, tempUpperBound = 800, debug = False):
         # assuming
         # set stride low because we have no image processing to take time
         super().__init__(camera, [], stride)

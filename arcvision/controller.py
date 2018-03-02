@@ -86,8 +86,7 @@ class Controller:
         print('Started arcvision server')
 
         self.crop_processor = CropProcessor(self.cam, crop)
-        self.background_processor = BackgroundProcessor(self.cam)
-        self.projector_processor = Projector(self.cam, self.projector_sock)
+        self.projector_processor = None#Projector(self.cam, self.projector_sock)
         self.processors = []
         # we're still in bootup mode, so a frame delay to collect the background won't hurt too bad
         for i in range(0,100):
@@ -97,6 +96,7 @@ class Controller:
             else:
                 self.background = np.mean([frame, self.background], axis = 0).astype(np.uint8)
 
+        self.background_processor = BackgroundProcessor(self.cam, background = self.background)
         self.transform_processor = SpatialCalibrationProcessor(self.cam, background = self.background)
         self.reserved_processors = [self.transform_processor]
 
@@ -111,7 +111,7 @@ class Controller:
         self.processors = []
         self.background_processor.pause()
         self.transform_processor.pause()
-        self.projector_processor.transform = self.transform_processor.inv_transform
+        #self.projector_processor.transform = self.transform_processor.inv_transform
 
     def _start_detection(self):
         self.processors = [DetectionProcessor(self.cam, self.background,
@@ -140,9 +140,9 @@ class Controller:
             elif mode == 'extent':
                 self._reset_processors()
                 self.processors = [SegmentProcessor(self.cam, self.background, 16, 1, 1)]
-            elif mode == 'colors':
-                self._reset_processors()
-                self.processors = [ColorCalibrationProcessor(self.cam, self.projector_processor, (1,1))]
+            #elif mode == 'colors':
+            #    self._reset_processors()
+            #    self.processors = [ColorCalibrationProcessor(self.cam, self.projector_processor, (1,1))]
 
             # notify that our mode changed
             await self.pub_sock.send_multipart(['vision-mode'.encode(), mode.encode()])

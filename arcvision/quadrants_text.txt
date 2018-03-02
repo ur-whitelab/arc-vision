@@ -1,0 +1,39 @@
+Test: 6 "quadrants", 6 cups, notating one at a time if each cup is properly identified in each quadrant
+
+QUADRANT    CUP     RESULT
+1           1       not detected
+1           2       CSTR 4
+1           3       cstr 2
+1           4       pfr 3
+1           5       pfr 6
+1           6       pfr 5 -- used purple paper...
+2           1       not detected
+2           2       not detected
+2           3       cstr 2
+2           4       pfr 3
+2           5       not detected
+2           6       pfr 5 -- used purple paper
+3           1       not detected
+3           2       not detected -- detected after increase in FLANN check number
+3           3       cstr 2
+3           4       pfr 3
+3           5       pfr 6
+3           6       pfr 5 -- did not need purple paper
+4           1       not detected
+4           2       CSTR 4
+4           3       cstr 2
+4           4       pfr 3
+4           5       pfr 6
+4           6       pfr 5 -- did not need purple paper
+5           1       not detected
+5           2       cstr 4
+5           3       cstr 2
+5           4       pfr 3
+5           5       pfr 6
+5           6       pfr 5 -- did not need purple paper
+6           1       not detected
+6           2       cstr 4
+6           3       cstr 2
+6           4       pfr 3
+6           5       pfr 6
+6           6       pfr 5 -- did not need purple paper

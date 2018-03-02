@@ -40,8 +40,8 @@ class Camera:
         # could be mp4 file, so catch error
         try:
             #self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,1920)#1280
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,1080)#720
             self.cap.set(cv2.CAP_PROP_FPS, 60)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
             self.cap.set(cv2.CAP_PROP_HUE, 1.0)
@@ -82,12 +82,12 @@ class Camera:
         for i,p in enumerate(self.frame_processors):
             if frame_ind % p.stride == 0:
                 #process frame
-                startTime = time.time()
+                #startTime = time.time()
                 self.frame = await p.process_frame(frame, frame_ind)
-                endTime = time.time()
-                elp = endTime - startTime
+                #endTime = time.time()
+                #elp = endTime - startTime
                 #if (elp != 0.0):
-                    #print("Elapsed time using processor {} is {} seconds, frame index is {}".format(p.name, endTime - startTime, frame_ind))
+                #    print("Elapsed time using processor {} is {} seconds, frame index is {}".format(p.name, endTime - startTime, frame_ind))
 
                 assert frame is not None, \
                     'Processor {} returned None on Process Frame {}'.format(type(p).__name__, self.frame_ind)
