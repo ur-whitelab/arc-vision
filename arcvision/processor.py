@@ -544,6 +544,20 @@ class TrackerProcessor(Processor):
         self._tracking = []
         self.labels = {}
         self.stride = stride
+        self.optflow = cv2.DualTVL1OpticalFlow_create()#use dense optical flow to track
+        self.detect_interval = 3
+        self.prev_gray = None
+        self.tracks = []
+        self.min_pts_near = 4#the minimum number of points we need to say an object's center is here
+        self.pts_dist_squared_th = int(100.0 / 720.0 * background.shape[0])**2
+        self.lk_params = dict( winSize  = (15, 15),
+                  maxLevel = 2,
+                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+
+        self.feature_params = dict( maxCorners = 500,
+                       qualityLevel = 0.3,
+                       minDistance = 7,
+                       blockSize = 7 )
         print('initializing trackerprocessor. background.shape is {} by {}'.format(background.shape[0], background.shape[1]))
         self.dist_th_upper = int(150.0 / 720.0 * background.shape[0])# distance upper threshold, in pixels
         self.dist_th_lower = int(75.0 / 720.0 * background.shape[0]) # to account for the size of the reactor
@@ -570,43 +584,70 @@ class TrackerProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
         delete = []
-        umat_frame = cv2.UMat(frame)
+        #umat_frame = cv2.UMat(frame)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if(self.prev_gray is None):
+            self.prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return frame
+        if len(self.tracks) > 0:
+            img0, img1 = self.prev_gray, gray
+            p0 = np.float32(self.tracks).reshape(-1, 1, 2)
+            p1, _st, _err = cv2.calcOpticalFlowPyrLK(img0, img1, p0, None, **self.lk_params)
+            p0r, _st, _err = cv2.calcOpticalFlowPyrLK(img1, img0, p1, None, **self.lk_params)
+            d = abs(p0-p0r).reshape(-1, 2).max(-1)
+            good = d < 1
+            new_tracks = []
+            for tr, (x, y), good_flag in zip(self.tracks, p1.reshape(-1, 2), good):
+                if not good_flag:
+                    continue
+                tr = (x, y)
+                #if len(tr) > self.track_len:
+                #    del tr[0]
+                new_tracks.append(tr)
+            self.tracks = new_tracks
+        if frame_ind % self.detect_interval == 0:#wait (detect_interval) frames before getting new points
+            mask = np.zeros_like(gray)
+            mask[:] = 255
+            p = cv2.goodFeaturesToTrack(gray, mask = mask, **self.feature_params)
+            if p is not None:
+                for x, y in np.float32(p).reshape(-1, 2):
+                    self.tracks.append((x, y))
+
+
+
+
         for i,t in enumerate(self._tracking):
+            old_center = t['center_scaled']
             t['connectedToPrimary'] = [] # list of tracked objects it is connected to as the primary/source node
             t['connectedToSecondary'] = []
             t['connectedToSource'] = False
-            status,bbox = t['tracker'].update(umat_frame)
+            #status,bbox = t['tracker'].update(umat_frame)
             t['observed'] -= 1
-
-            # if (self.ticks % 50 == 0):
-            #     print('Original scaled center of bbox was {}, tracker updated it to find {}'.format(rect_scaled_center(t['bbox'], frame), rect_scaled_center(bbox, frame)))
             # we know our objects should stay the same size all of the time.
             # check if the size dramatically changed.  if so, the object most likely was removed
             # if not, rescale the tracked bbox to the correct size
-            if(status):
-                if (t['area_init'] != 0):
-                    areaDiff = abs(rect_area(bbox) - t['area_init'])/t['area_init']
-                else:
-                    areaDiff = 0
-                # experimental value: if the size has changed by more than 15%, count that as a failed observation
-                center = poly_scaled_center(t['poly'], frame) if cv2.contourArea(t['poly']) < rect_area(bbox) else rect_scaled_center(bbox, frame)
-                dist = distance_pts([t['center_scaled'], center])
-                # check if its new location is a reflection, or drastically far away
-                # if it moved some radical distance, reinitialize the tracker on the original frame
-                if (dist > 0.03):
-                     t['tracker'].init(umat_frame, t['bbox'])
-                if (areaDiff <= .15 and dist < .03):
-                    #print('Updated distance is {}'.format(dist))
-                    # rescale the bbox to match the original area?
-                    scaleFactor = t['area_init']/rect_area(bbox)
-                    bbox_p = stretch_rectangle(bbox, frame, scaleFactor)
-                    t['delta'][0] = bbox[0] - t['init'][0] # we should use delta somewhere.
-                    t['delta'][1] = bbox[1] - t['init'][1]
-                    t['poly'] = t['poly'] + t['delta']
-                    t['bbox'] = bbox_p
-                    t['init'] = bbox
-                    t['center_scaled'] = poly_scaled_center(t['poly'], frame) if cv2.contourArea(t['poly']) < rect_area(bbox_p) else rect_scaled_center(bbox_p, frame)
-                    t['observed'] = min(t['observed'] +2, self.max_obs_possible)
+            unscaled_center = self._unscale_point(t['center_scaled'], frame.shape)
+            near_count = 0.
+            x_sum, y_sum = 0., 0.
+            for (x,y) in self.tracks:
+                xdiff = unscaled_center[0] - x
+                ydiff = unscaled_center[1] - y
+                square_dist = xdiff*xdiff + ydiff*ydiff
+                if(square_dist <= self.pts_dist_squared_th):
+                    near_count += 1
+                    x_sum += x
+                    y_sum += y
+            if (near_count > 0):
+                unscaled_center = (x_sum/near_count, y_sum/near_count) #update center coord
+            center = scale_point(unscaled_center, frame)
+            #print('near_count was {} and self.tracks was {}'.format(near_count, self.tracks))
+            dist = distance_pts([t['center_scaled'], center])
+            # check if its new location is a reflection, or drastically far away
+            if (dist < .5 and near_count >= self.min_pts_near):
+                #print('Updated distance is {}'.format(dist))
+                # rescale the bbox to match the original area?
+                t['center_scaled'] = center
+                t['observed'] = min(t['observed'] +2, self.max_obs_possible)
 
 
             # check obs counts
@@ -630,6 +671,7 @@ class TrackerProcessor(Processor):
         #    for t in self._tracking:
         #        print('{} is connected to ({})'.format(t['label'], t['connectedToPrimary']))
                 #print('Is {} connected to the feed source? {}'.format(t['label'], t['connectedToSource']))
+        self.prev_gray = gray
         return frame
 
     async def _connect_objects(self, frameSize):
@@ -741,22 +783,12 @@ class TrackerProcessor(Processor):
         for i,t in enumerate(self._tracking):
             if(t['observed'] < 3):
                 continue
-            bbox = t['bbox']
-            draw_rectangle(frame, bbox, (0,0,255), 1)#draw bounding box of polygon TODO: get this to ignore outlier keypoints
             center_pos = tuple(np.array(self._unscale_point(t['center_scaled'], frame.shape)).astype(np.int32))
             #print('the center position is {}'.format(center_pos))
             cv2.circle(frame,center_pos, 10, (0,0, 255), -1)#draw red dots at centers of each polygon
             #draw the inner and outer dist thresholds for linefinding
             cv2.circle(frame, center_pos, self.dist_th_lower, (0,255, 255), 2)#BGR for yellow
             cv2.circle(frame, center_pos, self.dist_th_upper, (255,255, 0), 2)#BGR for cyan
-            #now draw polygon
-            cv2.polylines(frame,[t['poly']], True, (0,0,255), 3)# + t['delta']
-
-            #put note about it
-            cv2.putText(frame,
-                        '{}: {}'.format(t['name'], t['observed']),
-                        (0, 60 * (i+ 1)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255))
 
         # view lines, as the decorator for LineProcessor is not working
         if (self.lineDetector is not None):
@@ -776,7 +808,7 @@ class TrackerProcessor(Processor):
             self.labels[label] += 1
         else:
             self.labels[label] = 1
-
+        center = poly_scaled_center(poly, frame) if cv2.contourArea(poly) < rect_area(bbox) else rect_scaled_center(bbox, frame)
         # get current value of temperature - this will not change after the initialization
         if (self.dialReader is not None):
             temperature = self.dialReader.temperature
@@ -784,8 +816,7 @@ class TrackerProcessor(Processor):
             temperature = 298
         #we need to make sure we don't have an existing object here
         for t in self._tracking:
-            intersection = intersecting(bbox, t['bbox'])
-            if intersection is not None and intersection > 0.25:
+            if distance_pts([center, t['center_scaled']]) < scale_point((self.dist_th_lower, 0), frame)[0]:
                 if label != t['label']:
                     #reclassification
                     self.labels[label] -= 1
@@ -794,37 +825,22 @@ class TrackerProcessor(Processor):
                 # found existing one
                 # add to count
                 t['observed'] = self.ticks_per_obs
-                #update polygon and bounding box and very different
-                if intersection < 0.55:
-                    # reduce the size of the bbox by 5% so it has less of a chance of including the reactor image in its initial polygon
-                    #scaled_center = rect_scaled_center(bbox,frame)#scaled means "From 0 to 1", unscaled means "In raw pixel coordinates"
-                    #bbox_p = stretch_rectangle(bbox, frame, .95)
-                    t['poly'] = poly
-                    t['center_scaled'] = poly_scaled_center(t['poly'], frame) if cv2.contourArea(t['poly']) < rect_area(bbox) else rect_scaled_center(bbox, frame)
-                    t['init'] = bbox
-                    t['delta'] = np.int32([0,0])
-                    t['area_init'] = rect_area(bbox)
-                    #cv2.TrackerKCF_create() is too drifty and doesn't "lose" objects once they're gone...
-                    #cv2.TrackerMIL_create() #this one seems to work with motion but is WAY too slow with GPU
-                    #cv2.TrackerTLD_create() #this tracks OK after faster motion but is also VERY slow with GPU
-                    #cv2.TrackerMedianFlow_create()#median flow doesn't handle big movement and is somewhat slow with GPU
-                    t['tracker'] = cv2.TrackerMedianFlow_create()#cv2.createOptFlow_DeepFlow()
-                    t['tracker'].init(cv2.UMat(frame), bbox)
+                t['center_scaled'] = center
                 return
 
 
         name = '{}-{}'.format(label, id_num)
-        tracker = cv2.TrackerMedianFlow_create()
-        status = tracker.init(cv2.UMat(frame), bbox)
+        #tracker = cv2.DualTVL1OpticalFlow_create()
+        #status = tracker.init(cv2.UMat(frame), bbox)
 
-        if not status:
-            print('Failed to initialize tracker')
-            return False
+        #if not status:
+        #    print('Failed to initialize tracker')
+        #    return False
 
 
 
         track_obj = {'name': name,
-                     'tracker': tracker,
+                     #'tracker': tracker,
                      'label': label,
                      'poly': poly,
                      'init': bbox,
@@ -1228,7 +1244,7 @@ class DetectionProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         if(self._ready):
             #copy the frame into it so we don't have it processed by later methods
-            asyncio.ensure_future(self._identify_features(frame.copy(), frame_ind))
+            asyncio.ensure_future(self._identify_features(frame, frame_ind))
         return frame
 
     async def decorate_frame(self, frame, name):
@@ -1249,19 +1265,11 @@ class DetectionProcessor(Processor):
             return frame
         for n in self.features:
             for f in self.features[n]:
-                points = f['poly']
                 color = f['color']
                 kp = f['kp']
                 kpcolor = f['kpcolor']
                 for p,c in zip(kp, kpcolor):
                     cv2.circle(frame, tuple(p), 6, color, thickness=-1)
-
-                #draw polygon
-                cv2.polylines(frame,[points],True, color, 3, cv2.LINE_AA)
-                #get bottom of polygon
-                cv2.putText(frame, '{} ({:.2})'.format(n, f['score']),
-                            (f['rect'][0], f['rect'][1]),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, color)
 
         return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
