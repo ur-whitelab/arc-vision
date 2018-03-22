@@ -125,7 +125,7 @@ class ColorCalibrationProcessor(Processor):
 
         self._update_cap(color_target_np, color_current_np)
 
-        return frame
+        return
 
     def _iter_rects(self, frame):
         dims = [frame.shape[i] // w for i,w in enumerate(self.grid_size)]
@@ -184,7 +184,7 @@ class ColorCalibrationProcessor(Processor):
                     '{}'.format(color),
                     (r[0] + 5, r[1] + r[3] // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
-        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
 
@@ -300,7 +300,7 @@ class SpatialCalibrationProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         if self.calibrate:
             self._calibrate(frame, frame_ind)
-        return frame
+        return
 
     def _calibrate(self, frame, frame_ind):
         if frame_ind % (self.stay + self.delay) > self.delay:
@@ -434,7 +434,7 @@ class SpatialCalibrationProcessor(Processor):
                 'Homography Fit: {}'.format(self.fit),
                 (100, 250),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,124,255))
-        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     @property
     def objects(self):
@@ -452,8 +452,8 @@ class CropProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
         if self.rect is not None:
-            return rect_view(frame, self.rect)
-        return frame
+            return cv2.pyrDown(rect_view(frame, self.rect))
+        return cv2.pyrDown(frame)
 
     async def decorate_frame(self, frame, name):
         '''Draw visuals onto the given frame, without carrying-out update'''
@@ -473,9 +473,10 @@ class PreprocessProcessor(Processor):
         return cv2.cvtColor(equ, cv2.COLOR_GRAY2BGR)
 
     async def decorate_frame(self, frame, name):
+        smaller_frame = cv2.pyrDown(frame)
         # go to BW but don't remove channel
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        equ = self.clahe.apply(frame)
+        frame = cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
+        equ = self.clahe.apply(smaller_frame)
         equ = cv2.cvtColor(equ, cv2.COLOR_GRAY2BGR)
         return equ
 
@@ -505,7 +506,7 @@ class BackgroundProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
         #cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        return frame
+        return
         if self.avg_background is None:
             self.avg_background = np.empty(frame.shape, dtype=np.uint32)
             self.avg_background[:] = 0
@@ -520,13 +521,13 @@ class BackgroundProcessor(Processor):
             self._background = cv2.blur(self._background, (5,5))
         #do max to protect against underflow
         #return np.maximum(frame - self._background, self._blank)
-        return frame
+        return
 
 
     async def decorate_frame(self, frame, name):
         #return np.maximum(frame - self._background, self._blank)
         #cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        return frame
+        return cv2.pyrDown(frame)
 
 class TrackerProcessor(Processor):
 
@@ -549,15 +550,11 @@ class TrackerProcessor(Processor):
         self.prev_gray = None
         self.tracks = []
         self.min_pts_near = 4#the minimum number of points we need to say an object's center is here
-        self.pts_dist_squared_th = int(100.0 / 720.0 * background.shape[0])**2
-        self.lk_params = dict( winSize  = (15, 15),
-                  maxLevel = 2,
-                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-
+        self.pts_dist_squared_th = int(75.0 / 2 / 720.0 * background.shape[0])**2
         self.feature_params = dict( maxCorners = 500,
-                       qualityLevel = 0.3,
-                       minDistance = 7,
-                       blockSize = 7 )
+                qualityLevel = 0.3,
+                minDistance = 7,
+                blockSize = 7 )
         print('initializing trackerprocessor. background.shape is {} by {}'.format(background.shape[0], background.shape[1]))
         self.dist_th_upper = int(150.0 / 720.0 * background.shape[0])# distance upper threshold, in pixels
         self.dist_th_lower = int(75.0 / 720.0 * background.shape[0]) # to account for the size of the reactor
@@ -585,36 +582,23 @@ class TrackerProcessor(Processor):
         self.ticks += 1
         delete = []
         #umat_frame = cv2.UMat(frame)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        smaller_frame = cv2.pyrDown(frame)
+        smaller_frame = cv2.pyrDown(smaller_frame)#4x downsampling
+        smaller_frame = cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
+        gray = smaller_frame#cv2.UMat(smaller_frame)
         if(self.prev_gray is None):
-            self.prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            return frame
-        if len(self.tracks) > 0:
-            img0, img1 = self.prev_gray, gray
-            p0 = np.float32(self.tracks).reshape(-1, 1, 2)
-            p1, _st, _err = cv2.calcOpticalFlowPyrLK(img0, img1, p0, None, **self.lk_params)
-            p0r, _st, _err = cv2.calcOpticalFlowPyrLK(img1, img0, p1, None, **self.lk_params)
-            d = abs(p0-p0r).reshape(-1, 2).max(-1)
-            good = d < 1
-            new_tracks = []
-            for tr, (x, y), good_flag in zip(self.tracks, p1.reshape(-1, 2), good):
-                if not good_flag:
-                    continue
-                tr = (x, y)
-                #if len(tr) > self.track_len:
-                #    del tr[0]
-                new_tracks.append(tr)
-            self.tracks = new_tracks
-        if frame_ind % self.detect_interval == 0:#wait (detect_interval) frames before getting new points
-            mask = np.zeros_like(gray)
+            self.prev_gray = gray#gray
+            return
+        img0, img1 = self.prev_gray, gray#gray
+        #p0 = np.float32(self.tracks).reshape(-1, 1, 2)
+        p1 = self.optflow.calc(img0, img1, None)#cv2.calcOpticalFlowFarneback(img0, img1, None, 0.5, 2, 15, 2, 5, 1.1, 0)#, p0)#, None, **self.lk_params)  p1, _st, _err
+        #p1 = cv2.UMat.get(p1)
+
+
+        if(frame_ind % self.detect_interval == 0 or len(self.tracks)==0):
+            mask = np.zeros((smaller_frame.shape), dtype=np.uint8)#np.zeros_like(gray)
             mask[:] = 255
-            p = cv2.goodFeaturesToTrack(gray, mask = mask, **self.feature_params)
-            if p is not None:
-                for x, y in np.float32(p).reshape(-1, 2):
-                    self.tracks.append((x, y))
-
-
-
+            self.tracks = np.float32(cv2.goodFeaturesToTrack(smaller_frame, mask=mask, **self.feature_params)).reshape(-1,2)
 
         for i,t in enumerate(self._tracking):
             old_center = t['center_scaled']
@@ -626,28 +610,30 @@ class TrackerProcessor(Processor):
             # we know our objects should stay the same size all of the time.
             # check if the size dramatically changed.  if so, the object most likely was removed
             # if not, rescale the tracked bbox to the correct size
-            unscaled_center = self._unscale_point(t['center_scaled'], frame.shape)
-            near_count = 0.
-            x_sum, y_sum = 0., 0.
-            for (x,y) in self.tracks:
-                xdiff = unscaled_center[0] - x
-                ydiff = unscaled_center[1] - y
-                square_dist = xdiff*xdiff + ydiff*ydiff
-                if(square_dist <= self.pts_dist_squared_th):
-                    near_count += 1
-                    x_sum += x
-                    y_sum += y
-            if (near_count > 0):
-                unscaled_center = (x_sum/near_count, y_sum/near_count) #update center coord
-            center = scale_point(unscaled_center, frame)
-            #print('near_count was {} and self.tracks was {}'.format(near_count, self.tracks))
-            dist = distance_pts([t['center_scaled'], center])
+            print("t['center_scaled'] is {}".format(t['center_scaled']))
+            center_unscaled = (t['center_scaled'][0]*smaller_frame.shape[1] , t['center_scaled'][1]*smaller_frame.shape[0])
+            print('center_unscaled is {} and smaller_frame.shape is {}'.format(center_unscaled, smaller_frame.shape))
+            print('the dimensions of p1 are {}'.format(p1.shape))
+            a = int(center_unscaled[1])
+            b = int(center_unscaled[0])
+            flow_at_center = [p1[a][b][0], p1[a][b][1]]#get the flow computed at previous center of object
+            #flow_at_center = flow_at_center[::-1]#this is reversed for some reason..?
+            flow_at_center = scale_point(flow_at_center, smaller_frame)
+            print('flow_at_center is {}'.format(flow_at_center))
+            dist = distance_pts([[0,0], flow_at_center ])#this is the magnitude of the vector
             # check if its new location is a reflection, or drastically far away
-            if (dist < .5 and near_count >= self.min_pts_near):
+            near_pts = 0
+            for pt in self.tracks:
+                if(distance_pts([center_unscaled, pt]) <= self.pts_dist_squared_th):
+                    near_pts += 1
+            if (dist < .05 * max(smaller_frame.shape) and near_pts >= 5):#don't move more than 5% of the biggest dimension
                 #print('Updated distance is {}'.format(dist))
                 # rescale the bbox to match the original area?
-                t['center_scaled'] = center
+                t['center_scaled'][0] += flow_at_center[0]
+                t['center_scaled'][1] += flow_at_center[1]
                 t['observed'] = min(t['observed'] +2, self.max_obs_possible)
+            #put note about it
+
 
 
             # check obs counts
@@ -672,7 +658,7 @@ class TrackerProcessor(Processor):
         #        print('{} is connected to ({})'.format(t['label'], t['connectedToPrimary']))
                 #print('Is {} connected to the feed source? {}'.format(t['label'], t['connectedToSource']))
         self.prev_gray = gray
-        return frame
+        return
 
     async def _connect_objects(self, frameSize):
         if (self.lineDetector is None) or len(self.lineDetector.lines) == 0:
@@ -772,11 +758,12 @@ class TrackerProcessor(Processor):
         return (array * [shape[1], shape[0]]).astype(np.int32)
 
     async def decorate_frame(self, frame, name):
+        smaller_frame = cv2.pyrDown(frame)
         if name != 'track':
-            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return  smaller_frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if name == 'line-segmentation':
             frame = self.lineDetector.threshold_background(frame)
-            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         source_position_unscaled = (frame.shape[1],round(frame.shape[0]*.5))
         cv2.circle(frame,source_position_unscaled, 10, (0,0, 255), -1)#draw one red dot for the source position
@@ -789,6 +776,10 @@ class TrackerProcessor(Processor):
             #draw the inner and outer dist thresholds for linefinding
             cv2.circle(frame, center_pos, self.dist_th_lower, (0,255, 255), 2)#BGR for yellow
             cv2.circle(frame, center_pos, self.dist_th_upper, (255,255, 0), 2)#BGR for cyan
+            cv2.putText(frame,
+                        '{}: {}'.format(t['name'], t['observed']),
+                        (0, 60 * (i+ 1)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255))
 
         # view lines, as the decorator for LineProcessor is not working
         if (self.lineDetector is not None):
@@ -798,16 +789,13 @@ class TrackerProcessor(Processor):
                 cv2.circle(frame, (endpoints[0][0],endpoints[0][1]), 3 , (255,0,0), -1)#BGR
                 cv2.circle(frame, (endpoints[1][0],endpoints[1][1]), 3 , (0,255,0), -1)#BGR
 
-        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def track(self, frame, bbox, poly, label, id_num, temperature = 298):
         '''
         Track a newly found object
         '''
-        if label in self.labels:
-            self.labels[label] += 1
-        else:
-            self.labels[label] = 1
+
         center = poly_scaled_center(poly, frame) if cv2.contourArea(poly) < rect_area(bbox) else rect_scaled_center(bbox, frame)
         # get current value of temperature - this will not change after the initialization
         if (self.dialReader is not None):
@@ -816,17 +804,12 @@ class TrackerProcessor(Processor):
             temperature = 298
         #we need to make sure we don't have an existing object here
         for t in self._tracking:
-            if distance_pts([center, t['center_scaled']]) < scale_point((self.dist_th_lower, 0), frame)[0]:
-                if label != t['label']:
-                    #reclassification
-                    self.labels[label] -= 1
-                    t['name'] = '{}-{}'.format(label, self.labels[label] - 1)
-                    t['label'] = label
-                # found existing one
-                # add to count
+            if  (t['name'] == '{}-{}'.format(label, id_num)): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
                 t['center_scaled'] = center
                 return
+            if (distance_pts([center, t['center_scaled']]) < self.dist_th_lower/frame.shape[0]): #scaling dist threshold
+                return #too close!
 
 
         name = '{}-{}'.format(label, id_num)
@@ -900,14 +883,15 @@ class SegmentProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         '''we only process on request'''
         if self.own_process:
-            return self._process_frame(frame, frame_ind)
-        return frame
+            self._process_frame(frame, frame_ind)
+            return
+        return
 
     def _process_frame(self, frame, frame_ind):
         bg = self._filter_background(frame)
         dist_transform = self._filter_distance(bg)
         self.rect_iter = self._filter_contours(dist_transform, frame.shape)
-        return frame
+        return
 
     def segments(self, frame = None):
         if frame is not None:
@@ -936,7 +920,7 @@ class SegmentProcessor(Processor):
             if len(img.shape) == 3 and img.shape[2] == 3:
                 gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
         else:
-            gray = cv2.inRange(gray, self.hsv_min, self.hsv_max)
+            gray = gray#cv2.inRange(gray, self.hsv_min, self.hsv_max)
         gray = cv2.blur(gray, (5,5))
         if name.find('bg-filter-blur') != -1:
             return gray
@@ -1071,11 +1055,11 @@ class SegmentProcessor(Processor):
     async def decorate_frame(self, frame, name):
         bg = self._filter_background(frame, name)
         if name.find('bg') != -1:
-            return bg
+            return cv2.pyrDown(bg)
 
         dist_transform = self._filter_distance(bg)
         if name == 'distance':
-            return dist_transform
+            return cv2.pyrDown(dist_transform)
 
         if name == 'boxes':
             for rect in self.rect_iter:#self._filter_contours(dist_transform, frame.shape):
@@ -1084,7 +1068,7 @@ class SegmentProcessor(Processor):
             markers = self._filter_ws_markers(dist_transform)
             ws_markers = cv2.watershed(frame, markers)
             frame[ws_markers == -1] = (255, 0, 0)
-        return frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
 class TrainingProcessor(Processor):
@@ -1129,7 +1113,7 @@ class TrainingProcessor(Processor):
         if self.poly_index >= 0 and self.poly_index < len(self.polys):
             self.poly = self.polys[self.poly_index]
 
-        return frame
+        return
 
     async def decorate_frame(self, frame, name):
 
@@ -1148,7 +1132,7 @@ class TrainingProcessor(Processor):
                 cv2.polylines(frame_view, [p], True, (60, 60, 60), 1)
             cv2.polylines(frame_view, [self.poly], True, (0, 0, 255), 3)
 
-        return frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def capture(self, frame, label):
         '''Capture and store the current image'''
@@ -1245,12 +1229,12 @@ class DetectionProcessor(Processor):
         if(self._ready):
             #copy the frame into it so we don't have it processed by later methods
             asyncio.ensure_future(self._identify_features(frame, frame_ind))
-        return frame
+        return
 
     async def decorate_frame(self, frame, name):
 
         if name != 'keypoints' and name != 'identify':
-            return frame
+            return cv2.pyrDown(frame)
 
         # draw key points
         for rect in self.segmenter.segments(frame):
@@ -1262,7 +1246,7 @@ class DetectionProcessor(Processor):
             draw_rectangle(frame, rect, (255, 0, 0), 1)
 
         if name == 'keypoints':
-            return frame
+            return cv2.pyrDown(frame)
         for n in self.features:
             for f in self.features[n]:
                 color = f['color']
@@ -1271,7 +1255,7 @@ class DetectionProcessor(Processor):
                 for p,c in zip(kp, kpcolor):
                     cv2.circle(frame, tuple(p), 6, color, thickness=-1)
 
-        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     async def _identify_features(self, frame, frame_ind):
         self._ready = False
@@ -1390,15 +1374,16 @@ class LineDetectionProcessor(Processor):
         if(self._ready):
             #copy the frame into it so we don't have it processed by later methods
             asyncio.ensure_future(self.detect_adjust_lines(frame.copy()))
-        return frame
+        return
 
     async def decorate_frame(self, frame, name):
+        smaller_frame = cv2.pyrDown(frame)
         if name != 'image-segmented' or name != 'lines-detected':
-            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return  smaller_frame#cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
 
         if name == 'image-segmented':
-            frame = self.threshold_background(frame)
-            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            bg = self.threshold_background(frame)
+            return  cv2.pyrDown(bg)#cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
 
         # if name == 'lines-detected':
         #     print('Adding the points')
@@ -1407,7 +1392,7 @@ class LineDetectionProcessor(Processor):
             cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
             cv2.circle(frame, (lines[i][1][0], lines[i][1][1]), (255,0,255),-1)
 
-        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
     '''
@@ -1602,12 +1587,11 @@ class DialProcessor(Processor):
 
         if (self.debug and frame_ind % 100 == 0):
             print('DEBUG: Current Temperature is {} K'.format(self.temperature))
-        return frame
-
+        return
 
     async def decorate_frame(self, frame, name):
         # Not going to do anything here
-        return frame
+        return cv2.pyrDown(frame)
 
     def close(self):
         super().close()

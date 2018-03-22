@@ -83,7 +83,8 @@ class Camera:
             if frame_ind % p.stride == 0:
                 #process frame
                 #startTime = time.time()
-                self.frame = await p.process_frame(frame, frame_ind)
+                self.frame = frame
+                await p.process_frame(frame, frame_ind)
                 #endTime = time.time()
                 #elp = endTime - startTime
                 #if (elp != 0.0):
@@ -167,7 +168,7 @@ class Camera:
     def get_decorated_frame(self, name):
         if name == 'raw' or len(self.frame_processors) == 0:
             self.decorate_index = 0
-            return self.decorated_frame
+            return cv2.pyrDown(self.decorated_frame)
 
         for i, p in enumerate(self.frame_processors):
             if name in p.streams:
