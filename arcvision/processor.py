@@ -1,12 +1,10 @@
 import asyncio
-import random
 import sys
 import cv2
 import numpy as np
 import os
 import time
 from numpy import linalg
-import matplotlib.pyplot as plt
 # from utils import *
 from .utils import *
 import pickle
@@ -1198,10 +1196,8 @@ class DetectionProcessor(Processor):
 
         #create color gradient
         N = len(img_db)
-        cm = plt.cm.get_cmap('Dark2')
         for i,t in enumerate(self.templates):
-            rgba = cm(i / N)
-            rgba = [int(x * 255) for x in rgba]
+            rgba = [int(x * 255) for x in np.random.random(size=4)]
             t.color = rgba[:-1]
             if t.keypoints is None:
                 t.keypoints = self.desc.detect(t.img)
