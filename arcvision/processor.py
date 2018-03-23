@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from .utils import *
 import pickle
 import scipy.stats as ss
+from darkflow.net.build import TFNet
 from multiprocessing import Process, Pipe, Lock
 import traceback
 from .griffin_powermate import GriffinPowermate,DialHandler
@@ -540,12 +541,14 @@ class TrackerProcessor(Processor):
             return self._tracking
 
 
-    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True):
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True):
         super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
+        self.do_tracking = do_tracking #this should only be False if we're using darkflow
         self.labels = {}
         self.stride = stride
-        self.optflow = cv2.DualTVL1OpticalFlow_create()#use dense optical flow to track
+        if(do_tracking):
+            self.optflow = cv2.DualTVL1OpticalFlow_create()#use dense optical flow to track
         self.detect_interval = 3
         self.prev_gray = None
         self.tracks = []
@@ -581,24 +584,22 @@ class TrackerProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
         delete = []
-        #umat_frame = cv2.UMat(frame)
-        smaller_frame = cv2.pyrDown(frame)
-        smaller_frame = cv2.pyrDown(smaller_frame)#4x downsampling
-        smaller_frame = cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
-        gray = smaller_frame#cv2.UMat(smaller_frame)
-        if(self.prev_gray is None):
-            self.prev_gray = gray#gray
-            return
-        img0, img1 = self.prev_gray, gray#gray
-        #p0 = np.float32(self.tracks).reshape(-1, 1, 2)
-        p1 = self.optflow.calc(img0, img1, None)#cv2.calcOpticalFlowFarneback(img0, img1, None, 0.5, 2, 15, 2, 5, 1.1, 0)#, p0)#, None, **self.lk_params)  p1, _st, _err
-        #p1 = cv2.UMat.get(p1)
 
-
-        if(frame_ind % self.detect_interval == 0 or len(self.tracks)==0):
-            mask = np.zeros((smaller_frame.shape), dtype=np.uint8)#np.zeros_like(gray)
-            mask[:] = 255
-            self.tracks = np.float32(cv2.goodFeaturesToTrack(smaller_frame, mask=mask, **self.feature_params)).reshape(-1,2)
+        if(self.do_tracking):
+            smaller_frame = cv2.pyrDown(frame)
+            smaller_frame = cv2.pyrDown(smaller_frame)#4x downsampling
+            smaller_frame = cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
+            gray = smaller_frame#cv2.UMat(smaller_frame)
+            if(self.prev_gray is None):
+                self.prev_gray = gray#gray
+                return
+            img0, img1 = self.prev_gray, gray#gray
+            #p0 = np.float32(self.tracks).reshape(-1, 1, 2)\
+            p1 = self.optflow.calc(img0, img1, None)#cv2.calcOpticalFlowFarneback(img0, img1, None, 0.5, 2, 15, 2, 5, 1.1, 0)#, p0)#, None, **self.lk_params)  p1, _st, _err
+            if(frame_ind % self.detect_interval == 0 or len(self.tracks)==0):
+                mask = np.zeros((smaller_frame.shape), dtype=np.uint8)#np.zeros_like(gray)
+                mask[:] = 255
+                self.tracks = np.float32(cv2.goodFeaturesToTrack(smaller_frame, mask=mask, **self.feature_params)).reshape(-1,2)
 
         for i,t in enumerate(self._tracking):
             old_center = t['center_scaled']
@@ -607,35 +608,33 @@ class TrackerProcessor(Processor):
             t['connectedToSource'] = False
             #status,bbox = t['tracker'].update(umat_frame)
             t['observed'] -= 1
-            # we know our objects should stay the same size all of the time.
-            # check if the size dramatically changed.  if so, the object most likely was removed
-            # if not, rescale the tracked bbox to the correct size
-            print("t['center_scaled'] is {}".format(t['center_scaled']))
-            center_unscaled = (t['center_scaled'][0]*smaller_frame.shape[1] , t['center_scaled'][1]*smaller_frame.shape[0])
-            print('center_unscaled is {} and smaller_frame.shape is {}'.format(center_unscaled, smaller_frame.shape))
-            print('the dimensions of p1 are {}'.format(p1.shape))
-            a = int(center_unscaled[1])
-            b = int(center_unscaled[0])
-            flow_at_center = [p1[a][b][0], p1[a][b][1]]#get the flow computed at previous center of object
-            #flow_at_center = flow_at_center[::-1]#this is reversed for some reason..?
-            flow_at_center = scale_point(flow_at_center, smaller_frame)
-            print('flow_at_center is {}'.format(flow_at_center))
-            dist = distance_pts([[0,0], flow_at_center ])#this is the magnitude of the vector
-            # check if its new location is a reflection, or drastically far away
-            near_pts = 0
-            for pt in self.tracks:
-                if(distance_pts([center_unscaled, pt]) <= self.pts_dist_squared_th):
-                    near_pts += 1
-            if (dist < .05 * max(smaller_frame.shape) and near_pts >= 5):#don't move more than 5% of the biggest dimension
-                #print('Updated distance is {}'.format(dist))
-                # rescale the bbox to match the original area?
-                t['center_scaled'][0] += flow_at_center[0]
-                t['center_scaled'][1] += flow_at_center[1]
-                t['observed'] = min(t['observed'] +2, self.max_obs_possible)
-            #put note about it
-
-
-
+            if(self.do_tracking):
+                # we know our objects should stay the same size all of the time.
+                # check if the size dramatically changed.  if so, the object most likely was removed
+                # if not, rescale the tracked bbox to the correct size
+                #print("t['center_scaled'] is {}".format(t['center_scaled']))
+                center_unscaled = (t['center_scaled'][0]*smaller_frame.shape[1] , t['center_scaled'][1]*smaller_frame.shape[0])
+                #print('center_unscaled is {} and smaller_frame.shape is {}'.format(center_unscaled, smaller_frame.shape))
+                #print('the dimensions of p1 are {}'.format(p1.shape))
+                a = int(center_unscaled[1])
+                b = int(center_unscaled[0])
+                flow_at_center = [p1[a][b][0], p1[a][b][1]]#get the flow computed at previous center of object
+                #flow_at_center = flow_at_center[::-1]#this is reversed for some reason..?
+                flow_at_center = scale_point(flow_at_center, smaller_frame)
+                print('flow_at_center is {}'.format(flow_at_center))
+                dist = distance_pts([[0,0], flow_at_center ])#this is the magnitude of the vector
+                # check if its new location is a reflection, or drastically far away
+                near_pts = 0
+                for pt in self.tracks:
+                    if(distance_pts([center_unscaled, pt]) <= self.pts_dist_squared_th):
+                        near_pts += 1
+                if (dist < .05 * max(smaller_frame.shape) and near_pts >= 5):#don't move more than 5% of the biggest dimension
+                    #print('Updated distance is {}'.format(dist))
+                    # rescale the bbox to match the original area?
+                    t['center_scaled'][0] += flow_at_center[0]
+                    t['center_scaled'][1] += flow_at_center[1]
+                    t['observed'] = min(t['observed'] +2, self.max_obs_possible)
+                #put note about it
             # check obs counts
             if t['observed'] < 0:
                 delete.append(i)
@@ -657,7 +656,8 @@ class TrackerProcessor(Processor):
         #    for t in self._tracking:
         #        print('{} is connected to ({})'.format(t['label'], t['connectedToPrimary']))
                 #print('Is {} connected to the feed source? {}'.format(t['label'], t['connectedToSource']))
-        self.prev_gray = gray
+        if(self.do_tracking):
+            self.prev_gray = gray
         return
 
     async def _connect_objects(self, frameSize):
@@ -752,7 +752,7 @@ class TrackerProcessor(Processor):
 
 
 
-    def _unscale_point(self,point,shape):
+    def _unscale_point(self,point,shape): #TODO: move these to utils.py
         return (point[0]*shape[1], point[1]* shape[0])
     def _unscale(self, array, shape):
         return (array * [shape[1], shape[0]]).astype(np.int32)
@@ -796,7 +796,7 @@ class TrackerProcessor(Processor):
         Track a newly found object
         '''
 
-        center = poly_scaled_center(poly, frame) if cv2.contourArea(poly) < rect_area(bbox) else rect_scaled_center(bbox, frame)
+        center = poly_scaled_center(poly, frame) if (poly is not None and cv2.contourArea(poly) < rect_area(bbox)) else rect_scaled_center(bbox, frame)
         # get current value of temperature - this will not change after the initialization
         if (self.dialReader is not None):
             temperature = self.dialReader.temperature
@@ -807,6 +807,7 @@ class TrackerProcessor(Processor):
             if  (t['name'] == '{}-{}'.format(label, id_num)): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
                 t['center_scaled'] = center
+                t['bbox'] = bbox
                 return
             if (distance_pts([center, t['center_scaled']]) < self.dist_th_lower/frame.shape[0]): #scaling dist threshold
                 return #too close!
@@ -828,7 +829,7 @@ class TrackerProcessor(Processor):
                      'poly': poly,
                      'init': bbox,
                      'area_init':rect_area(bbox),
-                     'center_scaled': poly_scaled_center(poly, frame) if cv2.contourArea(poly) < rect_area(bbox) else rect_scaled_center(bbox, frame),
+                     'center_scaled': poly_scaled_center(poly, frame) if (poly is not None and cv2.contourArea(poly) < rect_area(bbox)) else rect_scaled_center(bbox, frame),
                      'bbox': bbox,
                      'observed': self.ticks_per_obs,
                      'start': self.ticks,
@@ -1351,6 +1352,66 @@ class DetectionProcessor(Processor):
             #cede control
             await asyncio.sleep(0)
         return features
+
+class DarkflowProcessor(Processor):
+    '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
+    def __init__(self, camera, background, stride=3,
+                 threshold=0.1, track=True):
+        resource_path = os.path.join(os.path.dirname(__file__), os.pardir, 'resources/darkflow/')
+        self.options = {'pbLoad': resource_path + 'tiny-yolo-voc-2class-reactors.pb', 'metaLoad': resource_path + 'tiny-yolo-voc-2class-reactors.meta', 'gpu': 1.0, 'threshold': threshold }
+        self.tfnet = TFNet(self.options)
+        #we have a specific order required
+        #set-up our tracker
+        # give estimate of our stride
+        if track:
+            self.tracker = TrackerProcessor(camera, stride * 2, background, do_tracking = False)
+        else:
+            self.tracker = None
+
+        #then us
+        super().__init__(camera, ['identify'], stride)
+        self.track = track
+        self.stride = stride
+
+    @property
+    def objects(self):
+        if self.tracker is None:
+            return []
+
+        return self.tracker.objects
+
+    def close(self):
+        super().close()
+        self.tracker.close()
+
+    async def process_frame(self, frame, frame_ind):
+        result = self.tfnet.return_predict(frame)#get a dict of detected items with labels and confidences.
+        id_i = 1 #this is a workaround for now
+        for item in result:
+            #opencv-style bboxes are [x1, y1, x2, y2] but it's top-down for y, and frame.shape[0] is y-shape
+
+            bbox = [ item['topleft']['x'], item['topleft']['y'], item['bottomright']['x'],item['bottomright']['y'] ]
+            if(frame_ind % 20 == 0):
+                print('bbox = {}'.format(bbox))
+            label = item['label']
+            id_num = id_i
+            self.tracker.track(frame, bbox, None, label, id_num)
+            id_i += 1
+        return
+
+    async def decorate_frame(self, frame, name):
+        for i,item in enumerate(self.tracker._tracking):
+            cv2.rectangle(frame, (item['bbox'][0], item['bbox'][1]), (item['bbox'][2], item['bbox'][3]), (0,0,255))
+            (x,y) = item['bbox'][0] + (item['bbox'][2] - item['bbox'][0])/2 , item['bbox'][1] + (item['bbox'][3] - item['bbox'][1])/2 #self.tracker._unscale_point(item['center_scaled'], frame.shape)
+            x = int(x)
+            y = int(y)
+            cv2.circle(frame, (x,y), 10, (0,0,255), -1)
+            cv2.putText(frame,
+                        '{}: {}'.format(item['name'], item['observed']),
+                        (0, 60 * (i+1)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255))
+        return cv2.pyrDown(frame)
+
 
 class LineDetectionProcessor(Processor):
     ''' Detects drawn lines on an image (NB: works with a red marker or paper strip)

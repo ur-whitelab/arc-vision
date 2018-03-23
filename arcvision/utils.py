@@ -162,8 +162,9 @@ def scale_point(point, frame):
     return [x,y]
 
 def rect_scaled_center(rect, frame):
-    x = (rect[0] + rect[2] / 2) / frame.shape[1]
-    y = (rect[1] + rect[3] / 2) / frame.shape[0]
+    #EXPECTS (topleftx, toplefty, bottomrightx, bottomrighty)
+    x = (rect[0] + (rect[2] - rect[0]) / 2) / frame.shape[1]
+    y = (rect[1] + (rect[3] - rect[1]) / 2) / frame.shape[0]
     return [x,y]
 
 def poly_scaled_center(polygon, frame):

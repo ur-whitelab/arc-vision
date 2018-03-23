@@ -59,6 +59,7 @@ class Controller:
                          'descriptor_threshold_step': 0.0005}
         self.modes = ['background',
                       'detection',
+                      'darkflow',
                       'training',
                       'colors',
                       'calibration']
@@ -84,8 +85,6 @@ class Controller:
         self.img_db = ImageDB(template_dir)
         start_server(self.cam, self, server_port)
         print('Started arcvision server')
-
-        self.crop_processor = CropProcessor(self.cam, crop)
         self.projector_processor = None#Projector(self.cam, self.projector_sock)
         self.processors = []
         # we're still in bootup mode, so a frame delay to collect the background won't hurt too bad
@@ -116,6 +115,8 @@ class Controller:
     def _start_detection(self):
         self.processors = [DetectionProcessor(self.cam, self.background,
                                               self.img_db, self.descriptor)]
+    def _start_darkflow(self):
+        self.processors = [DarkflowProcessor(self.cam, self.background)]
 
     async def update_settings(self, settings):
 
@@ -127,6 +128,9 @@ class Controller:
             if mode == 'detection':
                 self._reset_processors()
                 self._start_detection()
+            elif mode == 'darkflow':
+                self._reset_processors()
+                self._start_darkflow()
             elif mode == 'background':
                 self._reset_processors()
                 self.background_processor.reset()
@@ -137,9 +141,6 @@ class Controller:
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.img_db, self.descriptor, self.background)]
-            elif mode == 'extent':
-                self._reset_processors()
-                self.processors = [SegmentProcessor(self.cam, self.background, 16, 1, 1)]
             #elif mode == 'colors':
             #    self._reset_processors()
             #    self.processors = [ColorCalibrationProcessor(self.cam, self.projector_processor, (1,1))]
@@ -171,23 +172,6 @@ class Controller:
 
                 # update our DB
                 self.templates = [x.label for x in self.img_db]
-            elif action == 'set_extent' and self.settings['mode'] == 'extent':
-                extent_view = None
-                try:
-                    extent_view = next(self.processors[0].segments())
-                except StopIteration:
-                    pass
-                # set the extent
-                self.crop_processor.rect = extent_view
-                # need to fix the background dimensions
-                self.background = rect_view(self.background, extent_view)
-                self.processors[0].background = self.background
-            elif action == 'reset_extent' and self.settings['mode'] == 'extent':
-                # unset extent
-                self.crop_processor.rect = None
-                # we lost background, so switch modes
-                self.background = np.zeros(self.cam.get_frame().shape, np.uint8)
-                self.processors[0].background = self.background
         #Set up the descriptor drop-downs
         if 'descriptor' in settings and (settings['descriptor'] != self.settings['descriptor'] or settings['descriptor_threshold'] != self.settings['descriptor_threshold']):
             desc = settings['descriptor']
