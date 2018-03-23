@@ -7,12 +7,13 @@ import copy
 import numpy as np
 import sys
 import time
+import atexit
 
 #The async is so that the program can yield control to other asynchronous tasks
 
 class Camera:
     '''Class for managing processing video frames'''
-    def __init__(self, video_file=-1, frame_buffer=1):
+    def __init__(self, video_file=-1, frame_buffer=1, output=None):
 
         if video_file == '':
             video_file = 0
@@ -33,8 +34,11 @@ class Camera:
         self.frame_ind = 1
         self.stream_names = {'Base': ['raw']}
         self.paused = False
-
         self.cap = cv2.VideoCapture(self.video_file)
+        self.output = output
+        atexit.register(self.close)
+
+
 
         # try turning off autofocus
         # could be mp4 file, so catch error
@@ -50,6 +54,11 @@ class Camera:
 
         except cv2.error:
             pass
+
+    def close(self):
+        if self.output is not None:
+            self.output.close()
+        self.cap.close()
 
     def add_frame_processor(self, p):
         '''Add a frame processor object'''
@@ -140,6 +149,12 @@ class Camera:
                 task = asyncio.ensure_future(self._process_frame(frame, self.frame_ind))
                 await asyncio.sleep(0)
                 await asyncio.gather(task)
+                if self.output is not None:
+                    if type(self.output) == str:
+                        print('Beginning to write to {}'.format(self.output))
+                        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                        self.output = cv2.VideoWriter(self.output, fourcc, 30.0, (self.frame.shape[1],self.frame.shape[0]))
+                    self.output.write(self.frame)
                 return True
         return False
 

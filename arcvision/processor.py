@@ -1,12 +1,10 @@
 import asyncio
-import random
 import sys
 import cv2
 import numpy as np
 import os
 import time
 from numpy import linalg
-import matplotlib.pyplot as plt
 # from utils import *
 from .utils import *
 import pickle
@@ -14,7 +12,6 @@ import scipy.stats as ss
 from darkflow.net.build import TFNet
 from multiprocessing import Process, Pipe, Lock
 import traceback
-from .griffin_powermate import GriffinPowermate,DialHandler
 
 
 _source_id = 0
@@ -1200,10 +1197,8 @@ class DetectionProcessor(Processor):
 
         #create color gradient
         N = len(img_db)
-        cm = plt.cm.get_cmap('Dark2')
         for i,t in enumerate(self.templates):
-            rgba = cm(i / N)
-            rgba = [int(x * 255) for x in rgba]
+            rgba = [int(x * 255) for x in np.random.random(size=4)]
             t.color = rgba[:-1]
             if t.keypoints is None:
                 t.keypoints = self.desc.detect(t.img)
@@ -1624,12 +1619,18 @@ class DialProcessor(Processor):
 
 
     def reset(self):
-        devices = GriffinPowermate.find_all()
-        if len(devices) == 0:
+        try:
+            from .griffin_powermate import GriffinPowermate,DialHandler
+            devices = GriffinPowermate.find_all()
+            if len(devices) == 0:
+                self.temperatureHandler = None
+                print('ERROR: FOUND NO DEVICES')
+            else :
+                self.temperatureHandler = DialHandler(devices[0], self.initTemp, self.tempStep, self.tempLowerBound,self.tempUpperBound)
+        except ModuleNotFoundError:
             self.temperatureHandler = None
-            print('ERROR: FOUND NO DEVICES')
-        else :
-            self.temperatureHandler = DialHandler(devices[0], self.initTemp, self.tempStep, self.tempLowerBound,self.tempUpperBound)
+            print('ERROR: NO DIAL ON LINUX')
+
 
 
         # initialize the objects- give them constant ID#s
