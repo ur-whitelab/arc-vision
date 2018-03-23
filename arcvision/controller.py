@@ -77,15 +77,13 @@ class Controller:
         return json.dumps(self.__dict__, default=lambda x: '')
 
 
-    async def handle_start(self, video_filename, server_port, template_dir, crop):
+    async def handle_start(self, video_filename, server_port, template_dir, output_video):
         '''Begin processing webcam and updating state'''
-
-        self.cam = Camera(video_filename)
+        self.cam = Camera(video_filename, output=output_video)
         self.img_db = ImageDB(template_dir)
         start_server(self.cam, self, server_port)
         print('Started arcvision server')
 
-        self.crop_processor = CropProcessor(self.cam, crop)
         self.projector_processor = None#Projector(self.cam, self.projector_sock)
         self.processors = []
         # we're still in bootup mode, so a frame delay to collect the background won't hurt too bad
@@ -359,9 +357,9 @@ class Controller:
 
 
 
-def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, zmq_projector_port, cc_hostname, template_dir, crop):
+def init(video_filename, server_port, zmq_sub_port, zmq_pub_port, zmq_projector_port, cc_hostname, template_dir, output_video):
     c = Controller(zmq_sub_port, zmq_pub_port, zmq_projector_port, cc_hostname)
-    asyncio.ensure_future(c.handle_start(video_filename, server_port, template_dir, crop))
+    asyncio.ensure_future(c.handle_start(video_filename, server_port, template_dir, output_video))
     loop = asyncio.get_event_loop()
     loop.run_forever()
 
@@ -378,14 +376,10 @@ def main():
     parser.add_argument('--cc-hostname', help='hostname for cc to receive zmq pub updates', default='localhost', dest='cc_hostname')
     parser.add_argument('--zmq-pub-port', help='port for publishing my zmq updates', default=2400, dest='zmq_pub_port')
     parser.add_argument('--template-include', help='directory containing template images', dest='template_dir', required=True)
-    parser.add_argument('--crop', help='two x,y points defining crop', dest='crop', nargs=4)
+    parser.add_argument('--output-video', help='where to output video if desired', dest='output_video', default=None)
     parser.add_argument('--debug', help='enable async debugging tools', action='store_true')
 
     args = parser.parse_args()
-    if args.crop is not None:
-        crop = [int(c) for c in args.crop]
-    else:
-        crop = None
     if args.debug:
         asyncio.get_event_loop().set_debug(True)
         import logging
@@ -398,4 +392,4 @@ def main():
          args.zmq_projector_port,
          args.cc_hostname,
          args.template_dir,
-         crop)
+         args.output_video)
