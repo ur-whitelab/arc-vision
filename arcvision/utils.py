@@ -141,13 +141,10 @@ def draw_rectangle(frame, rect, *args):
 def intersecting_rects(a, b):
     dx = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
     dy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    print(dx, dy)
     if (dx >= 0) and (dy >= 0):
-        # check if most of one square's area is included
-        intArea = dx * dy
-        minArea = min(a[2] * a[3],  b[2] * b[3])
-        if(minArea > 0):
-            return intArea / minArea
-    return None
+        return True
+    return False
 
 def scale_point(point, frame):
     '''Takes in a point as a tuple of ints and returns a list of floats in scaled coordinates (0 to 1)'''
@@ -165,6 +162,12 @@ def rect_scaled_center(rect, frame):
     #EXPECTS (topleftx, toplefty, bottomrightx, bottomrighty)
     x = (rect[0] + rect[2] / 2) / frame.shape[1]
     y = (rect[1] + rect[3] / 2) / frame.shape[0]
+    return [x,y]
+
+def rect_center(rect):
+      #EXPECTS (topleftx, toplefty, bottomrightx, bottomrighty)
+    x = (rect[0] + rect[2] / 2)
+    y = (rect[1] + rect[3] / 2)
     return [x,y]
 
 def poly_scaled_center(polygon, frame):

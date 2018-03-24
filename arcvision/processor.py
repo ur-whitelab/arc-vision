@@ -450,7 +450,10 @@ class TrackerProcessor(Processor):
         else:
             self.dialReader = None
 
-
+    def close(self):
+        super().close()
+        if self.dialReader is not None:
+            self.dialReader.close()
 
     async def process_frame(self, frame, frame_ind):
         self.ticks += 1
@@ -630,14 +633,13 @@ class TrackerProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         smaller_frame = cv2.pyrDown(frame)
-        if name != 'track':
-            return  smaller_frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if name == 'line-segmentation':
             frame = self.lineDetector.threshold_background(frame)
             return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        source_position_unscaled = (frame.shape[1],round(frame.shape[0]*.5))
-        cv2.circle(frame,source_position_unscaled, 10, (0,0, 255), -1)#draw one red dot for the source position
+        if name != 'track':
+            return  smaller_frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
         for i,t in enumerate(self._tracking):
             if(t['observed'] < 3):
                 continue
@@ -675,13 +677,11 @@ class TrackerProcessor(Processor):
             temperature = 298
         #we need to make sure we don't have an existing object here
         for t in self._tracking:
-            if  (t['name'] == '{}-{}'.format(label, id_num)): #found already existing reactor
+            if  t['name'] == '{}-{}'.format(label, id_num) or intersecting_rects(t['brect'], brect): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
                 t['center_scaled'] = center
                 t['brect'] = brect
                 return
-            if (distance_pts([center, t['center_scaled']]) < self.dist_th_lower/frame.shape[0]): #scaling dist threshold
-                return #too close!
 
 
         name = '{}-{}'.format(label, id_num)
@@ -1205,10 +1205,9 @@ class DetectionProcessor(Processor):
                             (dst_brect[2] * dst_brect[3] < 5) * self.weights[3] + \
                             self.weights[4]
                     if score > 0:
-                        cm = plt.cm.get_cmap()
                         features[name] = { 'color': t.color, 'poly': np.int32(dst_poly),
                             'kp': np.int32([kp[m.trainIdx].pt for m in good]).reshape(-1,2),
-                            'kpcolor': [cm(x.distance / good[-1].distance) for x in good],
+                            'kpcolor': [(255, 255, 255, 128) for x in good],
                             'score': score, 'rect': bounds}
                         # register it with our tracker
                         if self.track:
@@ -1253,7 +1252,7 @@ class DarkflowDetectionProcessor(Processor):
         #set-up our tracker
         # give estimate of our stride
         if track:
-            self.tracker = TrackerProcessor(camera, stride * 2, background, do_tracking = False)
+            self.tracker = TrackerProcessor(camera, stride,  background,  delete_threshold_period=5, do_tracking = False)
         else:
             self.tracker = None
 
@@ -1266,7 +1265,6 @@ class DarkflowDetectionProcessor(Processor):
     def objects(self):
         if self.tracker is None:
             return []
-
         return self.tracker.objects
 
     def close(self):
@@ -1278,8 +1276,6 @@ class DarkflowDetectionProcessor(Processor):
         id_i = 1 #this is a workaround for now
         for item in result:
             brect = darkflow_to_rect(item)
-            if(frame_ind % 20 == 0):
-                print('brect = {}'.format(brect))
             label = item['label']
             id_num = id_i
             self.tracker.track(frame, brect, None, label, id_num)
@@ -1289,10 +1285,8 @@ class DarkflowDetectionProcessor(Processor):
     async def decorate_frame(self, frame, name):
         for i,item in enumerate(self.tracker._tracking):
             draw_rectangle(frame, item['brect'], (255, 0, 0), 1)
-            (x,y) = item['brect'][0] + (item['brect'][2] - item['brect'][0])/2 , item['brect'][1] + (item['brect'][3] - item['brect'][1])/2 #self.tracker._unscale_point(item['center_scaled'], frame.shape)
-            x = int(x)
-            y = int(y)
-            cv2.circle(frame, (x,y), 10, (0,0,255), -1)
+            (x,y) = rect_center(item['brect'])
+            cv2.circle(frame, (int(x),int(y)), 10, (0,0,255), -1)
             cv2.putText(frame,
                         '{}: {}'.format(item['name'], item['observed']),
                         (0, 60 * (i+1)),
@@ -1337,8 +1331,8 @@ class LineDetectionProcessor(Processor):
         #     print('Adding the points')
         # add purple points for each endpoint detected
         for i in range(0,len(self._lines)):
-            cv2.circle(frame, (lines[i][0][0], lines[i][0][1]), (255,0,255),-1)
-            cv2.circle(frame, (lines[i][1][0], lines[i][1][1]), (255,0,255),-1)
+            cv2.circle(frame, (self._lines[i][0][0], self._lines[i][0][1]), (255,0,255),-1)
+            cv2.circle(frame, (self._lines[i][1][0], self._lines[i][1][1]), (255,0,255),-1)
 
         return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
