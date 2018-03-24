@@ -115,7 +115,12 @@ class Camera:
                 if decorated_frame is None:
                     'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
                     decorated_frame = frame
-
+        if self.output is not None:
+            if type(self.output) == str:
+                print('Beginning to write to {}'.format(self.output))
+                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                self.output = cv2.VideoWriter(self.output, fourcc, 30.0, (self.frame.shape[1],self.frame.shape[0]))
+            self.output.write(self.frame)
         if update_decorated:
             self.decorated_frame = decorated_frame
         self.sem.release()
@@ -149,12 +154,6 @@ class Camera:
                 task = asyncio.ensure_future(self._process_frame(frame, self.frame_ind))
                 await asyncio.sleep(0)
                 await asyncio.gather(task)
-                if self.output is not None:
-                    if type(self.output) == str:
-                        print('Beginning to write to {}'.format(self.output))
-                        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-                        self.output = cv2.VideoWriter(self.output, fourcc, 30.0, (self.frame.shape[1],self.frame.shape[0]))
-                    self.output.write(self.frame)
                 return True
         return False
 
