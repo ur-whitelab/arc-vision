@@ -80,7 +80,7 @@ class Controller:
                 self.background = np.mean([frame, self.background], axis = 0).astype(np.uint8)
 
         self.background_processor = BackgroundProcessor(self.cam, background = self.background)
-        self.transform_processor = SpatialCalibrationProcessor(self.cam, background = self.background)
+        self.transform_processor = SpatialCalibrationProcessor(self.cam, delay=10, stay=20,  background = self.background, segmenter=DarkflowSegmentProcessor(self.cam))
         self.reserved_processors = [self.transform_processor]
 
         await self.update_settings(self.settings)
@@ -100,7 +100,7 @@ class Controller:
         self.processors = [DetectionProcessor(self.cam, self.background,
                                               self.img_db, self.descriptor)]
     def _start_darkflow(self):
-        self.processors = [DarkflowProcessor(self.cam, self.background)]
+        self.processors = [DarkflowDetectionProcessor(self.cam, self.background)]
 
     async def update_settings(self, settings):
 

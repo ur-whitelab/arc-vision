@@ -1,8 +1,7 @@
-import asyncio, sys, cv2, os, time, pickle, traceback, pkg_resources
+import asyncio, sys, cv2, os, time, pickle, traceback
 import numpy as np
 from numpy import linalg
 from .utils import *
-from darkflow.net.build import TFNet
 from multiprocessing import Process, Pipe, Lock
 
 SOURCE_ID = 0
@@ -95,11 +94,14 @@ class SpatialCalibrationProcessor(Processor):
     ''' Const for the serialization file name '''
     PICKLE_FILE = '.\calibrationdata\spatialCalibrationData.p'
 
-    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20, writeOnPause = True, readAtInit = True):
+    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20, writeOnPause = True, readAtInit = True, segmenter = None):
         #stay should be bigger than delay
         #stay is how long the calibration dot stays in one place (?)
         #delay is how long we wait before reading its position
-        self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.25, channel=channel, name='Spatial')
+        if segmenter is None:
+            self.segmenter = SegmentProcessor(camera, background, -1, 4, max_rectangle=0.25, channel=channel, name='Spatial')
+        else:
+            self.segmenter = segmenter
         super().__init__(camera, ['calibration', 'transform'], stride)
         self.calibration_points = np.random.random( (N, 2)) * 0.8 + 0.1
 
@@ -172,7 +174,7 @@ class SpatialCalibrationProcessor(Processor):
             allData = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, 'rb'))
             res_string = '{}x{}'.format(self.frameWidth, self.frameHeight)
             if (res_string in allData):
-                data =allData[res_string]
+                data = allData[res_string]
                 self.first = False
                 self._transform = data['transform']
                 self._scaled_transform = data['scaled_transform']
@@ -214,7 +216,7 @@ class SpatialCalibrationProcessor(Processor):
         if frame_ind % (self.stay + self.delay) == 0:
             # update homography estimate
             if self.index == self.N - 1:
-                print('updating homography')
+                print('updating homography...fit = {}'.format(self.fit))
                 self._update_homography(frame)
                 print(self._transform)
                 self.calibration_points = np.random.random( (self.N, 2)) * 0.8 + 0.1
@@ -225,11 +227,11 @@ class SpatialCalibrationProcessor(Processor):
             self.index %= self.N
 
     def warp_img(self, img):
-        return cv2.warpPerspective(img, self._best_scaled_transform, (img.shape[1], img.shape[0]))
-        # for i in range(img.shape[2]):
-        #     img[:,:,i] = cv2.warpPerspective(img[:,:,i],
-        #                                     self._best_scaled_transform,
-        #                                     img.shape[1::-1])
+        #return cv2.warpPerspective(img, self._best_scaled_transform, (img.shape[1], img.shape[0]))
+        for i in range(img.shape[2]):
+            img[:,:,i] = cv2.warpPerspective(img[:,:,i],
+                                             self._best_scaled_transform,
+                                             img.shape[1::-1])
         return img
 
     def warp_point(self, point):
@@ -341,44 +343,6 @@ class SpatialCalibrationProcessor(Processor):
             self._objects[0]['center_scaled'] = self.calibration_points[self.index]
             return self._objects
         return []
-
-class CropProcessor(Processor):
-    '''Class that detects multiple objects given a set of labels and images'''
-    def __init__(self, camera, rect=None, stride=1):
-        super().__init__(camera, ['crop'], stride)
-        self.rect = rect
-
-    async def process_frame(self, frame, frame_ind):
-        '''Perform update on frame, carrying out algorithm'''
-        if self.rect is not None:
-            return cv2.pyrDown(rect_view(frame, self.rect))
-        return cv2.pyrDown(frame)
-
-    async def decorate_frame(self, frame, name):
-        '''Draw visuals onto the given frame, without carrying-out update'''
-        return await self.process_frame(frame, 0)
-
-class PreprocessProcessor(Processor):
-    '''Substracts and computes background'''
-    def __init__(self, camera, stride=1, gamma=2.5):
-        super().__init__(camera, ['preprocess'], stride)
-        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-
-    async def process_frame(self, frame, frame_ind):
-        '''Perform update on frame, carrying out algorithm'''
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        equ = self.clahe.apply(frame)
-        #return equ[:,:, np.newaxis]
-        return cv2.cvtColor(equ, cv2.COLOR_GRAY2BGR)
-
-    async def decorate_frame(self, frame, name):
-        smaller_frame = cv2.pyrDown(frame)
-        # go to BW but don't remove channel
-        frame = cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
-        equ = self.clahe.apply(smaller_frame)
-        equ = cv2.cvtColor(equ, cv2.COLOR_GRAY2BGR)
-        return equ
-
 
 class BackgroundProcessor(Processor):
     '''Substracts and computes background'''
@@ -1249,13 +1213,33 @@ class DetectionProcessor(Processor):
             await asyncio.sleep(0)
         return features
 
-class DarkflowProcessor(Processor):
+class DarkflowSegmentProcessor(Processor):
+    def __init__(self, camera, stride=1, threshold=0.8):
+        self.tfnet = load_darkflow('dot-tracking', gpu=1.0, threshold=threshold)
+        super().__init__(camera, ['segment'], stride)
+
+    def segments(self, frame):
+        return self._process_frame(frame)
+
+    def _process_frame(self, frame):
+        result = self.tfnet.return_predict(frame) #get a dict of detected items with labels and confidences.
+        sorted_result = sorted(result, key=lambda x: x['confidence'], reverse=True)
+        segments = [darkflow_to_rect(x) for x in sorted_result]
+        return segments
+
+    async def process_frame(self, frame, frame_id):
+        return
+
+    async def decorate_frame(self, frame, name):
+        if name == 'segment':
+            for s in self.segments(frame):
+                draw_rectangle(frame, s, (255, 255, 0), 1)
+
+class DarkflowDetectionProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
     def __init__(self, camera, background, stride=3,
                  threshold=0.1, track=True):
-        resource_path =pkg_resources.resource_filename('arcvision', 'resources/models/reactor-tracking')
-        self.options = {'pbLoad': resource_path + '/tiny-yolo-voc-2class-reactors.pb', 'metaLoad': resource_path + '/tiny-yolo-voc-2class-reactors.meta', 'gpu': 1.0, 'threshold': threshold }
-        self.tfnet = TFNet(self.options)
+        self.tfnet = load_darkflow('reactor-tracking', gpu=1.0, threshold=threshold)
         #we have a specific order required
         #set-up our tracker
         # give estimate of our stride
@@ -1284,9 +1268,7 @@ class DarkflowProcessor(Processor):
         result = self.tfnet.return_predict(frame)#get a dict of detected items with labels and confidences.
         id_i = 1 #this is a workaround for now
         for item in result:
-            #opencv-style bboxes are [x1, y1, x2, y2] but it's top-down for y, and frame.shape[0] is y-shape
-
-            bbox = [ item['topleft']['x'], item['topleft']['y'], item['bottomright']['x'],item['bottomright']['y'] ]
+            bbox = darkflow_to_bbox(item)
             if(frame_ind % 20 == 0):
                 print('bbox = {}'.format(bbox))
             label = item['label']

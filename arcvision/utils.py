@@ -1,12 +1,6 @@
-import cv2
-import glob
-import pickle
-import os
-import copy
-import hashlib
+import cv2, glob, pickle, os, copy, hashlib, math, pkg_resources
 import numpy as np
-import math
-
+from darkflow.net.build import TFNet
 
 class ImageDB:
     '''Class which stores pre-processed, labeled images used in identification'''
@@ -220,3 +214,23 @@ def distance_pts(endpoints):
 
 def val_in_range(val, lower_bound,upper_bound):
     return ((val >= lower_bound) and (val <= upper_bound))
+
+def load_darkflow(directory, threshold=0.2, **args):
+    resource_path =pkg_resources.resource_filename(__name__, 'resources/models/' + directory)
+    options = args
+    options['threshold'] = threshold
+    try:
+        options['pbLoad'] = list(glob.glob(resource_path + '/*.pb'))[0]
+        options['metaLoad'] = list(glob.glob(resource_path + '/*.meta'))[0]
+    except IndexError:
+        raise FileNotFoundError(f'Could not find darkflow model pb or meta in {resource_path}')
+    return TFNet(options)
+
+def darkflow_to_bbox(df):
+    #opencv-style bboxes are [x1, y1, x2, y2] but it's top-down for y, and frame.shape[0] is y-shape
+    bbox = [ df['topleft']['x'], df['topleft']['y'], df['bottomright']['x'],df['bottomright']['y'] ]
+    return bbox
+
+def darkflow_to_rect(df):
+    rect = [ df['topleft']['x'], df['topleft']['y'], df['bottomright']['x'] - df['topleft']['x'], df['bottomright']['y'] - df['topleft']['y'] ]
+    return rect
