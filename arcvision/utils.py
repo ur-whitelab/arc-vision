@@ -138,7 +138,7 @@ def draw_rectangle(frame, rect, *args):
     cv2.rectangle(frame, (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3]), *args)
 
 
-def intersecting(a, b):
+def intersecting_rects(a, b):
     dx = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
     dy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
     if (dx >= 0) and (dy >= 0):
@@ -155,10 +155,16 @@ def scale_point(point, frame):
     y = float(point[1])/frame.shape[0]
     return [x,y]
 
-def rect_scaled_center(rect, frame):
+def box_scaled_center(rect, frame):
     #EXPECTS (topleftx, toplefty, bottomrightx, bottomrighty)
     x = (rect[0] + (rect[2] - rect[0]) / 2) / frame.shape[1]
     y = (rect[1] + (rect[3] - rect[1]) / 2) / frame.shape[0]
+    return [x,y]
+
+def rect_scaled_center(rect, frame):
+    #EXPECTS (topleftx, toplefty, bottomrightx, bottomrighty)
+    x = (rect[0] + rect[2] / 2) / frame.shape[1]
+    y = (rect[1] + rect[3] / 2) / frame.shape[0]
     return [x,y]
 
 def poly_scaled_center(polygon, frame):
@@ -169,19 +175,22 @@ def poly_scaled_center(polygon, frame):
     centerY = moment['m01'] / moment['m00'] / frame.shape[0]
     return [centerX, centerY]
 
-def rect_area(rect):
+def box_area(rect):
     return (abs(rect[0]- rect[2])* abs(rect[1] -rect[3]))
+
+def rect_area(rect):
+    return abs(rect[2] * rect[3])
+
 
 def rect_color_channel(frame, rect):
     '''Returns which channel is maximum'''
     return np.argmax(np.mean(rect_view(frame, rect), axis=(0,1)))
 
-def percentDiff(existingItem, newItem):
+def percent_diff(existingItem, newItem):
     #TODO: fix so this is robust to 'existingItem' being near-zero, or move to some other comparison
     return float(newItem-existingItem)/existingItem
 
-
-def box_to_endpoints(rect):
+def rect_to_endpoints(rect):
     '''Lazy implementation of finding endpoints of a bounding rectangle.  Find the vertices, use the lowest and its hypoteneuse'''
     box = np.int0(cv2.boxPoints(rect))
     return (box[0],box[2])
@@ -226,7 +235,7 @@ def load_darkflow(directory, threshold=0.2, **args):
         raise FileNotFoundError(f'Could not find darkflow model pb or meta in {resource_path}')
     return TFNet(options)
 
-def darkflow_to_bbox(df):
+def darkflow_to_box(df):
     #opencv-style bboxes are [x1, y1, x2, y2] but it's top-down for y, and frame.shape[0] is y-shape
     bbox = [ df['topleft']['x'], df['topleft']['y'], df['bottomright']['x'],df['bottomright']['y'] ]
     return bbox

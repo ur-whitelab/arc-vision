@@ -396,7 +396,7 @@ class TrackerProcessor(Processor):
 
     @property
     def objects(self):
-        '''Objects should have a dictionary with center, bbox, name, and id'''
+        '''Objects should have a dictionary with center, brect, name, and id'''
         if (self.dialReader is not None):
             return self.dialReader._objects + self._tracking
         else:
@@ -468,12 +468,12 @@ class TrackerProcessor(Processor):
             t['connectedToPrimary'] = [] # list of tracked objects it is connected to as the primary/source node
             t['connectedToSecondary'] = []
             t['connectedToSource'] = False
-            #status,bbox = t['tracker'].update(umat_frame)
+            #status,brect = t['tracker'].update(umat_frame)
             t['observed'] -= 1
             if(self.do_tracking):
                 # we know our objects should stay the same size all of the time.
                 # check if the size dramatically changed.  if so, the object most likely was removed
-                # if not, rescale the tracked bbox to the correct size
+                # if not, rescale the tracked brect to the correct size
                 #print("t['center_scaled'] is {}".format(t['center_scaled']))
                 center_unscaled = (t['center_scaled'][0]*smaller_frame.shape[1] , t['center_scaled'][1]*smaller_frame.shape[0])
                 #print('center_unscaled is {} and smaller_frame.shape is {}'.format(center_unscaled, smaller_frame.shape))
@@ -492,7 +492,7 @@ class TrackerProcessor(Processor):
                         near_pts += 1
                 if (dist < .05 * max(smaller_frame.shape) and near_pts >= 5):#don't move more than 5% of the biggest dimension
                     #print('Updated distance is {}'.format(dist))
-                    # rescale the bbox to match the original area?
+                    # rescale the brect to match the original area?
                     t['center_scaled'][0] += flow_at_center[0]
                     t['center_scaled'][1] += flow_at_center[1]
                     t['observed'] = min(t['observed'] +2, self.max_obs_possible)
@@ -653,12 +653,12 @@ class TrackerProcessor(Processor):
 
         return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    def track(self, frame, bbox, poly, label, id_num, temperature = 298):
+    def track(self, frame, brect, poly, label, id_num, temperature = 298):
         '''
         Track a newly found object
         '''
 
-        center = poly_scaled_center(poly, frame) if (poly is not None and cv2.contourArea(poly) < rect_area(bbox)) else rect_scaled_center(bbox, frame)
+        center = poly_scaled_center(poly, frame) if (poly is not None and cv2.contourArea(poly) < rect_area(brect)) else rect_scaled_center(brect, frame)
         # get current value of temperature - this will not change after the initialization
         if (self.dialReader is not None):
             temperature = self.dialReader.temperature
@@ -669,7 +669,7 @@ class TrackerProcessor(Processor):
             if  (t['name'] == '{}-{}'.format(label, id_num)): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
                 t['center_scaled'] = center
-                t['bbox'] = bbox
+                t['brect'] = brect
                 return
             if (distance_pts([center, t['center_scaled']]) < self.dist_th_lower/frame.shape[0]): #scaling dist threshold
                 return #too close!
@@ -677,7 +677,7 @@ class TrackerProcessor(Processor):
 
         name = '{}-{}'.format(label, id_num)
         #tracker = cv2.DualTVL1OpticalFlow_create()
-        #status = tracker.init(cv2.UMat(frame), bbox)
+        #status = tracker.init(cv2.UMat(frame), brect)
 
         #if not status:
         #    print('Failed to initialize tracker')
@@ -689,10 +689,10 @@ class TrackerProcessor(Processor):
                      #'tracker': tracker,
                      'label': label,
                      'poly': poly,
-                     'init': bbox,
-                     'area_init':rect_area(bbox),
-                     'center_scaled': poly_scaled_center(poly, frame) if (poly is not None and cv2.contourArea(poly) < rect_area(bbox)) else rect_scaled_center(bbox, frame),
-                     'bbox': bbox,
+                     'init': brect,
+                     'area_init':rect_area(brect),
+                     'center_scaled': poly_scaled_center(poly, frame) if (poly is not None and cv2.contourArea(poly) < rect_area(brect)) else rect_scaled_center(brect, frame),
+                     'brect': brect,
                      'observed': self.ticks_per_obs,
                      'start': self.ticks,
                      'delta': np.int32([0,0]),
@@ -703,7 +703,7 @@ class TrackerProcessor(Processor):
         return True
 
 class SegmentProcessor(Processor):
-    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 110, 16], name=None):#TODO: mess with this max_rectangle and see if that helps the big bbox isues
+    def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 110, 16], name=None):#TODO: mess with this max_rectangle and see if that helps the big brect isues
         '''Pass stride = -1 to only process on request'''
         if(name is None):
             name_str = ''
@@ -938,7 +938,7 @@ class TrainingProcessor(Processor):
 
     @property
     def objects(self):
-        '''Objects should have a dictionary with center, bbbox, name, and id'''
+        '''Objects should have a dictionary with center, bbrect, name, and id'''
         return self._objects
 
     ''' This will segment an ROI from the frame and you can label it'''
@@ -1011,7 +1011,7 @@ class TrainingProcessor(Processor):
 
         #create obj
         self._objects = [{
-            'bbox': self.rect,
+            'brect': self.rect,
             'poly': self.poly,
             'center_scaled': poly_scaled_center(self.poly, frame) if cv2.contourArea(self.poly) < rect_area(self.rect) else rect_scaled_center(self.rect, frame),
             'label': label,
@@ -1185,15 +1185,15 @@ class DetectionProcessor(Processor):
 
                     src_poly = np.float32(t.poly).reshape(-1,1,2)
                     dst_poly = cv2.perspectiveTransform(src_poly,M)
-                    dst_bbox = cv2.boundingRect(dst_poly)
+                    dst_brect = cv2.boundingRect(dst_poly)
 
                     # check if the polygon is actually good
                     area = max(0.01, cv2.contourArea(dst_poly))
                     perimter = max(0.01, cv2.arcLength(dst_poly, True))
                     score = len(good) / len(des) * self.weights[0] + \
                             perimter / area * self.weights[1] + \
-                            (dst_bbox[2] / bounds[2] - 1 + dst_bbox[3] /  bounds[3] - 1) * self.weights[2] + \
-                            (dst_bbox[2] * dst_bbox[3] < 5) * self.weights[3] + \
+                            (dst_brect[2] / bounds[2] - 1 + dst_brect[3] /  bounds[3] - 1) * self.weights[2] + \
+                            (dst_brect[2] * dst_brect[3] < 5) * self.weights[3] + \
                             self.weights[4]
                     if score > 0:
                         cm = plt.cm.get_cmap()
@@ -1268,19 +1268,19 @@ class DarkflowDetectionProcessor(Processor):
         result = self.tfnet.return_predict(frame)#get a dict of detected items with labels and confidences.
         id_i = 1 #this is a workaround for now
         for item in result:
-            bbox = darkflow_to_bbox(item)
+            brect = darkflow_to_brect(item)
             if(frame_ind % 20 == 0):
-                print('bbox = {}'.format(bbox))
+                print('brect = {}'.format(brect))
             label = item['label']
             id_num = id_i
-            self.tracker.track(frame, bbox, None, label, id_num)
+            self.tracker.track(frame, brect, None, label, id_num)
             id_i += 1
         return
 
     async def decorate_frame(self, frame, name):
         for i,item in enumerate(self.tracker._tracking):
-            cv2.rectangle(frame, (item['bbox'][0], item['bbox'][1]), (item['bbox'][2], item['bbox'][3]), (0,0,255))
-            (x,y) = item['bbox'][0] + (item['bbox'][2] - item['bbox'][0])/2 , item['bbox'][1] + (item['bbox'][3] - item['bbox'][1])/2 #self.tracker._unscale_point(item['center_scaled'], frame.shape)
+            cv2.rectangle(frame, (item['brect'][0], item['brect'][1]), (item['brect'][2], item['brect'][3]), (0,0,255))
+            (x,y) = item['brect'][0] + (item['brect'][2] - item['brect'][0])/2 , item['brect'][1] + (item['brect'][3] - item['brect'][1])/2 #self.tracker._unscale_point(item['center_scaled'], frame.shape)
             x = int(x)
             y = int(y)
             cv2.circle(frame, (x,y), 10, (0,0,255), -1)
@@ -1361,7 +1361,7 @@ class LineDetectionProcessor(Processor):
                 existingLine = currentLines[j]
 
                 currentSlope,currentIntercept = line_from_endpoints(existingLine['endpoints'])
-                if(abs(percentDiff(currentSlope,detectedSlope)) < 0.15 and abs(percentDiff(currentIntercept,detectedIntercept)) < .15):
+                if(abs(percent_diff(currentSlope,detectedSlope)) < 0.15 and abs(percent_diff(currentIntercept,detectedIntercept)) < .15):
                     # easy way out - take the longer of the two lines. future implementations should check if they should be overlapped and take the longest line combination from them
                     if (distance_pts(detectedEndpoints) > distance_pts(existingLine['endpoints'])):
                         # replace with the new line
@@ -1382,7 +1382,7 @@ class LineDetectionProcessor(Processor):
                     stagedLine = self._stagedLines[j]
                     stagedSlope = stagedLine['slope']
                     stagedIntercept = stagedLine['intercept']
-                    if (abs(percentDiff(stagedSlope,detectedSlope)) < 0.15 and abs(percentDiff(stagedIntercept, detectedIntercept)) < 0.15):
+                    if (abs(percent_diff(stagedSlope,detectedSlope)) < 0.15 and abs(percent_diff(stagedIntercept, detectedIntercept)) < 0.15):
                         stagedLineUpdated = True
                         if(distance_pts(detectedEndpoints) > distance_pts(stagedLine['endpoints'])):
                             self._stagedLines[j] = {'endpoints':detectedEndpoints, 'slope':detectedSlope, 'intercept':detectedIntercept, 'detected':True, 'observed':self._observationLimit}
@@ -1481,7 +1481,7 @@ class LineDetectionProcessor(Processor):
     def isLineSimilar(detectedEndpoints,currentEndpoints):
         detectedSlope,detectedIntercept = line_from_endpoints(detectedEndpoints)
         currentSlope,currentIntercept = line_from_endpoints(currentEndpoints)
-        if(math.abs(percentDiff(currentSlope,detectedSlope)) < 0.05 and math.abs(percentDiff(currentIntercept,detectedIntercept)) < .05):
+        if(math.abs(percent_diff(currentSlope,detectedSlope)) < 0.05 and math.abs(percent_diff(currentIntercept,detectedIntercept)) < .05):
             return True
         else:
             return False

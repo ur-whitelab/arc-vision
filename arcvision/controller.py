@@ -80,7 +80,7 @@ class Controller:
                 self.background = np.mean([frame, self.background], axis = 0).astype(np.uint8)
 
         self.background_processor = BackgroundProcessor(self.cam, background = self.background)
-        self.transform_processor = SpatialCalibrationProcessor(self.cam, delay=10, stay=20,  background = self.background, segmenter=DarkflowSegmentProcessor(self.cam))
+        self.transform_processor = SpatialCalibrationProcessor(self.cam, delay=5, stay=10,  background = self.background, segmenter=DarkflowSegmentProcessor(self.cam))
         self.reserved_processors = [self.transform_processor]
 
         await self.update_settings(self.settings)
