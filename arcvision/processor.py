@@ -2,7 +2,6 @@ import asyncio, sys, cv2, os, time, pickle, traceback, pkg_resources
 import numpy as np
 from numpy import linalg
 from .utils import *
-import scipy.stats as ss
 from darkflow.net.build import TFNet
 from multiprocessing import Process, Pipe, Lock
 
@@ -86,96 +85,6 @@ class Processor:
     def _process_work(cls, data):
         '''Override this method to process data passed to queue_work in a different thread'''
         pass
-
-
-class ColorCalibrationProcessor(Processor):
-    '''
-    This will segment the frame and find the color mode in defined squares. This
-    requires the spatial calibration to be done so that the coordinates can be
-    transformed'''
-
-    def __init__(self, camera, projector, grid_size=(8,8)):
-        super().__init__(camera, ['camera-grid', 'camera-modes', 'projector-grid', 'projector-modes'] ,1)
-        self.grid_size = grid_size
-        self.projector = projector
-
-    async def process_frame(self, frame, frame_ind):
-
-        color_current = []
-        for rect, color in self._iter_colors(frame):
-            color_current.append(list(color))
-        color_current_np = np.array(color_current, np.uint8).reshape(-1, 3)
-
-        img = self.projector.frame
-
-        color_target = []
-        for rect, color in self._iter_colors(img):
-            color_target.append(list(color))
-        color_target_np = np.array(color_target, np.uint8).reshape(-1, 3)
-
-        self._update_cap(color_target_np, color_current_np)
-
-        return
-
-    def _iter_rects(self, frame):
-        dims = [frame.shape[i] // w for i,w in enumerate(self.grid_size)]
-        #get 2D indices over grid size
-        for index in np.indices( self.grid_size ).reshape(2, -1).T:
-            start = index * dims
-            yield (start[1], start[0], dims[1], dims[0])
-        return frame
-
-    def _iter_colors(self, frame):
-        for r in self._iter_rects(frame):
-           #get the mode for each channel and convert to int from length-1 array
-            color = ( int(ss.mode(rect_view(frame[:,:,i], r).reshape(-1), axis=None)[0]) for i in range(frame.shape[2]) )
-            color = tuple(color)
-            yield r, color
-
-    def _update_cap(self, color_target, color_current):
-        '''Update the camera capture properties. Properties are defined in HSV space. color_target and color_current should
-           be arrays of colors'''
-        hsv_current = cv2.cvtColor(np.uint8(color_current).reshape(-1,1,3), cv2.COLOR_BGR2HSV)
-        hsv_target = cv2.cvtColor(np.uint8(color_target).reshape(-1,1,3), cv2.COLOR_BGR2HSV)
-
-        ratio = hsv_target.reshape(-1, 3) / hsv_current.reshape(-1, 3)
-        avg_ratio = np.clip(np.mean(ratio, axis=0).reshape(3), 0.5, 2)
-
-        print('Camera sees ')
-        print(hsv_current)
-        print('Projector sees ')
-        print(hsv_target)
-        print('Clipped ratio is ')
-        print(avg_ratio)
-        print('Camera moving from ', self.camera.cap.get(cv2.CAP_PROP_HUE), self.camera.cap.get(cv2.CAP_PROP_SATURATION), self.camera.cap.get(cv2.CAP_PROP_GAIN))
-        self.camera.cap.set(cv2.CAP_PROP_HUE, round(avg_ratio[0] * max(1, self.camera.cap.get(cv2.CAP_PROP_HUE))))
-        self.camera.cap.set(cv2.CAP_PROP_SATURATION, round(avg_ratio[1] * self.camera.cap.get(cv2.CAP_PROP_SATURATION)))
-        self.camera.cap.set(cv2.CAP_PROP_GAIN, round(avg_ratio[2] * max(1, self.camera.cap.get(cv2.CAP_PROP_GAIN))))
-        print('To ', self.camera.cap.get(cv2.CAP_PROP_HUE), self.camera.cap.get(cv2.CAP_PROP_SATURATION), self.camera.cap.get(cv2.CAP_PROP_GAIN))
-
-
-    async def decorate_frame(self, frame, name):
-
-        mode = None
-        if name.split('-')[0] == 'projector':
-            frame = self.projector.frame
-            mode = name.split('-')[1]
-        elif name.split('-')[0] == 'camera':
-            mode = name.split('-')[1]
-
-
-
-        for r,color in self._iter_colors(frame):
-            if mode == 'modes':
-                draw_rectangle(frame, r, color, -1)
-            if mode is not None:
-                draw_rectangle(frame, r, (0, 0, 0), 1)
-                cv2.putText(frame,
-                    '{}'.format(color),
-                    (r[0] + 5, r[1] + r[3] // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
-        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
 
 
 class SpatialCalibrationProcessor(Processor):

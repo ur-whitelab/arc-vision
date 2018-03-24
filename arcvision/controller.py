@@ -1,25 +1,11 @@
-import zmq
+import zmq, time, argparse, asyncio, glob, os, sys, copy, json
 import zmq.asyncio
-import time
-import argparse
-import asyncio
-import glob
-import os
-import sys
-import copy
-# from camera import Camera
-# from server import start_server
-# from processor import *
-# from utils import *
-# from projector import Projector
 from .camera import Camera
 from .server import start_server
 from .processor import *
 from .utils import *
 from .projector import Projector
-import json
 from multiprocessing import freeze_support
-
 from .protobufs.graph_pb2 import Graph
 
 
@@ -61,7 +47,6 @@ class Controller:
                       'detection',
                       'darkflow',
                       'training',
-                      'colors',
                       'calibration']
         self.descriptors = ['AKAZE', 'SURF', 'BRISK' , 'KAZE']
         self.descriptor = cv2.AKAZE_create()#self.descriptor = cv2.xfeatures2d.SURF_create(400)#
@@ -140,11 +125,6 @@ class Controller:
             elif mode == 'training':
                 self._reset_processors()
                 self.processors = [TrainingProcessor(self.cam, self.img_db, self.descriptor, self.background)]
-            #elif mode == 'colors':
-            #    self._reset_processors()
-            #    self.processors = [ColorCalibrationProcessor(self.cam, self.projector_processor, (1,1))]
-
-            # notify that our mode changed
             await self.pub_sock.send_multipart(['vision-mode'.encode(), mode.encode()])
 
         if 'pause' in settings:
