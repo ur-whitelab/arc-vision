@@ -1,4 +1,4 @@
-import asyncio, sys, cv2, os, time, pickle, traceback
+import asyncio, sys, cv2, os, time, pickle, traceback, pathlib
 import numpy as np
 from numpy import linalg
 from .utils import *
@@ -92,9 +92,9 @@ class SpatialCalibrationProcessor(Processor):
        previous round estimate'''
 
     ''' Const for the serialization file name '''
-    PICKLE_FILE = '.\calibrationdata\spatialCalibrationData.p'
+    PICKLE_FILE = pathlib.Path('.') / 'calibrationdata' / 'spatialCalibrationData.p'
 
-    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20, writeOnPause = True, readAtInit = True, segmenter = None):
+    def __init__(self, camera, background=None, channel=1, stride=1, N=16, delay=10, stay=20, readAtInit = True, segmenter = None):
         #stay should be bigger than delay
         #stay is how long the calibration dot stays in one place (?)
         #delay is how long we wait before reading its position
@@ -116,7 +116,6 @@ class SpatialCalibrationProcessor(Processor):
         self.N = N
         self.first = True
         self.channel = channel
-        self.writeOnPause = writeOnPause
         self.readAtReset = readAtInit
         self.frameWidth = camera.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.frameHeight = camera.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
@@ -137,43 +136,13 @@ class SpatialCalibrationProcessor(Processor):
     def play(self):
         self.calibrate = True
 
-    def pause(self):
-        # only write good fits/better than the previously calculated one
-        if (self.writeOnPause and self.fit < .001 and self.fit < self.initial_fit):
-            if (os.path.exists(SpatialCalibrationProcessor.PICKLE_FILE)):
-                # read the existing data file to update
-                data = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, 'rb'))
-            else:
-                # start fresh
-                data = {}
-            # create a sub-dict for this resolution
-            subData = {}
-            subData['transform'] = self._transform
-            subData['scaled_transform']=self._scaled_transform
-            subData['best_scaled_transform'] = self._best_scaled_transform
-            subData['best_list'] = self._best_list
-            subData['best_inv_list'] = self._best_inv_list
-            subData['fit'] = self.fit
-            subData['width'] = self.frameWidth
-            subData['height'] = self.frameHeight
-
-            # add it to the existing dictionary, then write the updated data out
-            data['{}x{}'.format(self.frameWidth, self.frameHeight)] = subData
-
-            pickle.dump(data, open(SpatialCalibrationProcessor.PICKLE_FILE, 'wb'))
-        self.calibrate = False
-
-
-
-    def reset(self):
-        self.points = np.zeros( (self.N, 2) )
-        self.counts = np.zeros( (self.N, 1) )
-        # read the pickle file
-        if(self.readAtReset and os.path.exists(SpatialCalibrationProcessor.PICKLE_FILE)):
+    def _read_calibration(self, filepath):
+        if(os.path.exists(filepath)):
             # check if the currently read file has an entry for this resolution
-            allData = pickle.load(open(SpatialCalibrationProcessor.PICKLE_FILE, 'rb'))
+            allData = pickle.load(open(filepath, 'rb'))
             res_string = '{}x{}'.format(self.frameWidth, self.frameHeight)
             if (res_string in allData):
+                print(f'Reading homography from {filepath}')
                 data = allData[res_string]
                 self.first = False
                 self._transform = data['transform']
@@ -186,16 +155,61 @@ class SpatialCalibrationProcessor(Processor):
                 self.calibrate = False
                 self.first = False
                 self.initial_fit = self.fit
-                return
-        self._transform = np.identity(3)
-        self._scaled_transform = np.identity(3)
-        self._best_scaled_transform = np.identity(3)
-        self._best_fit = 0.01 #reasonable amount, anything less shouldn't be used
-        self._best_list = np.array([1., 0., 0., 0., 1., 0., 0., 0. ,1.])
-        self._best_inv_list = np.array([1., 0., 0., 0., 1., 0., 0., 0., 1.])
-        self.fit = 100
-        self.initial_fit = self.fit
+                return True
+        return False
+
+    def _write_calibration(self, filepath):
+        if (os.path.exists(filepath)):
+                # read the existing data file to update
+                data = pickle.load(open(filepath, 'rb'))
+        if (os.path.exists(filepath)):
+                  # read the existing data file to update
+            data = pickle.load(open(filepath, 'rb'))
+        else:
+            # start fresh
+            data = {}
+        # create a sub-dict for this resolution
+        subData = {}
+        subData['transform'] = self._transform
+        subData['scaled_transform']=self._scaled_transform
+        subData['best_scaled_transform'] = self._best_scaled_transform
+        subData['best_list'] = self._best_list
+        subData['best_inv_list'] = self._best_inv_list
+        subData['fit'] = self.fit
+        subData['width'] = self.frameWidth
+        subData['height'] = self.frameHeight
+
+        # add it to the existing dictionary, then write the updated data out
+        data['{}x{}'.format(self.frameWidth, self.frameHeight)] = subData
+        print(f'Writing calibration to {filepath}')
+        #make sure directory is ready
+        os.makedirs(filepath.parent)
+        pickle.dump(data, open(filepath, 'wb'))
+
+    def pause(self):
+        # only write good fits/better than the previously calculated one
+        if (self.fit < .001 and self.fit < self.initial_fit):
+            self._write_calibration(SpatialCalibrationProcessor.PICKLE_FILE)
+
         self.calibrate = False
+
+
+
+    def reset(self):
+        self.points = np.zeros( (self.N, 2) )
+        self.counts = np.zeros( (self.N, 1) )
+        #try to read the pickle file
+        if not self.readAtReset or not self._read_calibration(SpatialCalibrationProcessor.PICKLE_FILE):
+            #didn't work, set to defaults
+            self._transform = np.identity(3)
+            self._scaled_transform = np.identity(3)
+            self._best_scaled_transform = np.identity(3)
+            self._best_fit = 0.01 #reasonable amount, anything less shouldn't be used
+            self._best_list = np.array([1., 0., 0., 0., 1., 0., 0., 0. ,1.])
+            self._best_inv_list = np.array([1., 0., 0., 0., 1., 0., 0., 0., 1.])
+            self.fit = 100
+            self.initial_fit = self.fit
+            self.calibrate = False
 
 
     async def process_frame(self, frame, frame_ind):
@@ -218,7 +232,8 @@ class SpatialCalibrationProcessor(Processor):
             if self.index == self.N - 1:
                 print('updating homography...fit = {}'.format(self.fit))
                 self._update_homography(frame)
-                print(self._transform)
+                if (self.fit < .001 and self.fit < self.initial_fit):
+                    self._write_calibration(SpatialCalibrationProcessor.PICKLE_FILE)
                 self.calibration_points = np.random.random( (self.N, 2)) * 0.8 + 0.1
                 #seed next round with fit, weighted by how well the homography fit
                 self.points[:] = cv2.perspectiveTransform(self.calibration_points.reshape(-1,1,2), linalg.inv(self._transform)).reshape(-1,2)
@@ -265,12 +280,7 @@ class SpatialCalibrationProcessor(Processor):
         t, mask = cv2.findHomography((self.points[self.counts[:,0] > 0, :]).reshape(-1, 1, 2),
                                 self.calibration_points[self.counts[:,0] > 0, :].reshape(-1, 1, 2),
                                 0)
-        print('---------------')
         p = cv2.perspectiveTransform((self.points).reshape(-1, 1, 2), self._transform).reshape(-1, 2)
-        for i in range(self.N):
-            #print('Points  {} (used:{}): ({}) ({}) ({})'.format(i, mask[i], self.points[i,:], p[i, :], self.calibration_points[i,:]))
-            print('Points  {}: ({}) ({}) ({})'.format(i, self.points[i,:], p[i, :], self.calibration_points[i,:]))
-        print('---------------')
         ts, _ = cv2.findHomography(self._unscale(self.points[self.counts[:,0] > 0, :], frame.shape).reshape(-1, 1, 2),
                     self._unscale(self.calibration_points[self.counts[:,0] > 0,:], frame.shape).reshape(-1, 1, 2),
                     0)
@@ -292,7 +302,6 @@ class SpatialCalibrationProcessor(Processor):
             self._best_fit = self.fit
             self._best_list = (self._transform).flatten()
             self._best_inv_list = (linalg.inv(self._transform)).flatten()
-            print(self._best_list)
 
     def _unscale(self, array, shape):
         return (array * [shape[1], shape[0]]).astype(np.int32)
@@ -1268,7 +1277,7 @@ class DarkflowDetectionProcessor(Processor):
         result = self.tfnet.return_predict(frame)#get a dict of detected items with labels and confidences.
         id_i = 1 #this is a workaround for now
         for item in result:
-            brect = darkflow_to_brect(item)
+            brect = darkflow_to_rect(item)
             if(frame_ind % 20 == 0):
                 print('brect = {}'.format(brect))
             label = item['label']
@@ -1279,7 +1288,7 @@ class DarkflowDetectionProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         for i,item in enumerate(self.tracker._tracking):
-            cv2.rectangle(frame, (item['brect'][0], item['brect'][1]), (item['brect'][2], item['brect'][3]), (0,0,255))
+            draw_rectangle(frame, item['brect'], (255, 0, 0), 1)
             (x,y) = item['brect'][0] + (item['brect'][2] - item['brect'][0])/2 , item['brect'][1] + (item['brect'][3] - item['brect'][1])/2 #self.tracker._unscale_point(item['center_scaled'], frame.shape)
             x = int(x)
             y = int(y)
@@ -1443,7 +1452,7 @@ class LineDetectionProcessor(Processor):
                 length_thresh_upper = 600
                 if (aspectRatio < aspect_ratio_thresh and val_in_range(area, area_thresh_lower, area_thresh_upper) and minDim < width_thresh and val_in_range(maxDim, length_thresh_lower, length_thresh_upper)):
                     # only do vertex calculation if it is the correct shape
-                    endpoints = box_to_endpoints(rect)
+                    endpoints = rect_to_endpoints(rect)
                     transpose_shape = np.flip(np.array(mask.shape),0)
                     ep1_scaled = endpoints[0]/transpose_shape
                     ep2_scaled = endpoints[1]/transpose_shape
