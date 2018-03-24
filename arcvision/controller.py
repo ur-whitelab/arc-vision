@@ -84,10 +84,6 @@ class Controller:
         self.img_db = ImageDB(template_dir)
         start_server(self.cam, self, server_port)
         print('Started arcvision server')
-<<<<<<< HEAD
-=======
-
->>>>>>> c438aeb673110e9b3b8a21b03c0dc6bc44609800
         self.projector_processor = None#Projector(self.cam, self.projector_sock)
         self.processors = []
         # we're still in bootup mode, so a frame delay to collect the background won't hurt too bad

@@ -1,28 +1,20 @@
-import asyncio
-import sys
-import cv2
+import asyncio, sys, cv2, os, time, pickle, traceback, pkg_resources
 import numpy as np
-import os
-import time
 from numpy import linalg
-# from utils import *
 from .utils import *
-import pickle
 import scipy.stats as ss
 from darkflow.net.build import TFNet
 from multiprocessing import Process, Pipe, Lock
-import traceback
 
-
-_source_id = 0
-_conditions_id = 999
-_object_id = 1 # 0 and 999 are reserved for temperature
-_sentinel = -1
+SOURCE_ID = 0
+CONDITIONS_ID = 999
+OBJECT_ID = 1 # 0 and 999 are reserved for temperature
+SENTINEL = -1
 
 def object_id():
-    global _object_id
-    _object_id += 1
-    return _object_id
+    global OBJECT_ID
+    OBJECT_ID += 1
+    return OBJECT_ID
 
 class Processor:
     '''A camera processor'''
@@ -56,7 +48,7 @@ class Processor:
         print('Closing ' + self.__class__.__name__)
         self.camera.remove_frame_processor(self)
         if self.has_consumer:
-            self._work_conn.send(_sentinel)
+            self._work_conn.send(SENTINEL)
             self.consumer.join()
 
     def _queue_work(self,data):
@@ -83,7 +75,7 @@ class Processor:
         '''This is the other thread main loop, which reads in data, handles the exit and calls _process_work'''
         while True:
             data = return_conn.recv()
-            if data == _sentinel:
+            if data == SENTINEL:
                 break
             result = cls._process_work(data)
             lock.release()
@@ -1352,8 +1344,8 @@ class DarkflowProcessor(Processor):
     '''Detects query images in frame. Uses async to spread out computation. Cannot handle replicas of an object in frame'''
     def __init__(self, camera, background, stride=3,
                  threshold=0.1, track=True):
-        resource_path = os.path.join(os.path.dirname(__file__), os.pardir, 'resources/darkflow/')
-        self.options = {'pbLoad': resource_path + 'tiny-yolo-voc-2class-reactors.pb', 'metaLoad': resource_path + 'tiny-yolo-voc-2class-reactors.meta', 'gpu': 1.0, 'threshold': threshold }
+        resource_path =pkg_resources.resource_filename('arcvision', 'resources/models/reactor-tracking')
+        self.options = {'pbLoad': resource_path + '/tiny-yolo-voc-2class-reactors.pb', 'metaLoad': resource_path + '/tiny-yolo-voc-2class-reactors.meta', 'gpu': 1.0, 'threshold': threshold }
         self.tfnet = TFNet(self.options)
         #we have a specific order required
         #set-up our tracker
@@ -1634,7 +1626,7 @@ class DialProcessor(Processor):
 
 
         # initialize the objects- give them constant ID#s
-        self._objects = [{'id': _conditions_id, 'label': 'conditions', 'weight':[self.initTemp,1]}]
+        self._objects = [{'id': CONDITIONS_ID, 'label': 'conditions', 'weight':[self.initTemp,1]}]
 
     @property
     def temperature(self):

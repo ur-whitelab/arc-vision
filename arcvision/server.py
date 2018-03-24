@@ -3,15 +3,12 @@
 
 
 import tornado.web
-import cv2
+import cv2, asyncio, os, json, pkg_resources
 from tornado.platform.asyncio import AsyncIOMainLoop
-import asyncio
-import os
-import json
 
 AsyncIOMainLoop().install()
 
-RESOURCES = os.path.join(os.path.dirname(__file__), os.pardir, 'resources')
+RESOURCES = pkg_resources.resource_filename('arcvision', 'resources')
 WEB_STRIDE = 1
 
 class HtmlPageHandler(tornado.web.RequestHandler):
