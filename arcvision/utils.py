@@ -141,7 +141,6 @@ def draw_rectangle(frame, rect, *args):
 def intersecting_rects(a, b):
     dx = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
     dy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
-    print(dx, dy)
     if (dx >= 0) and (dy >= 0):
         return True
     return False
@@ -246,3 +245,10 @@ def darkflow_to_box(df):
 def darkflow_to_rect(df):
     rect = [ df['topleft']['x'], df['topleft']['y'], df['bottomright']['x'] - df['topleft']['x'], df['bottomright']['y'] - df['topleft']['y'] ]
     return rect
+
+def diff_blur(frame1, frame2, do_sum=True):
+    img = cv2.absdiff(frame1, frame2)
+    if do_sum:
+        img = np.sum(img, 2).astype(np.uint8)
+    img = cv2.medianBlur(img, 9)
+    return img

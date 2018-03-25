@@ -71,16 +71,10 @@ class Controller:
         print('Started arcvision server')
         self.projector_processor = None#Projector(self.cam, self.projector_sock)
         self.processors = []
-        # we're still in bootup mode, so a frame delay to collect the background won't hurt too bad
-        for i in range(0,100):
-            _,frame = self.cam.cap.read()
-            if (i == 0):
-                self.background = frame
-            else:
-                self.background = np.mean([frame, self.background], axis = 0).astype(np.uint8)
 
-        self.background_processor = BackgroundProcessor(self.cam, background = self.background)
-        self.transform_processor = SpatialCalibrationProcessor(self.cam, delay=5, stay=10,  background = self.background, segmenter=DarkflowSegmentProcessor(self.cam))
+        self.background = None
+        self.background_processor = BackgroundProcessor(self.cam)
+        self.transform_processor = SpatialCalibrationProcessor(self.cam, delay=5, stay=10, segmenter=DarkflowSegmentProcessor(self.cam))
         self.reserved_processors = [self.transform_processor]
 
         await self.update_settings(self.settings)
@@ -137,6 +131,9 @@ class Controller:
             action = settings['action']
             if action == 'complete_background' and self.settings['mode'] == 'background':
                 self.background_processor.pause()
+                self.transform_processor.background = self.background_processor.background
+                self.background = self.background_processor.background
+                self._reset_processors()
             if action == 'start_background' and self.settings['mode'] == 'background':
                 self.background_processor.reset()
             elif action == 'set_rect' and self.settings['mode'] == 'training':

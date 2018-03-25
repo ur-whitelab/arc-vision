@@ -121,6 +121,16 @@ class SpatialCalibrationProcessor(Processor):
         self.frameHeight = camera.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.reset()
 
+
+    @property
+    def background(self):
+        return None
+
+    @background.setter
+    def background(self, background):
+        self.segmenter.background = background
+
+
     @property
     def transform(self):
         return self._best_scaled_transform
@@ -356,7 +366,7 @@ class SpatialCalibrationProcessor(Processor):
 class BackgroundProcessor(Processor):
     '''Substracts and computes background'''
     def __init__(self, camera, background = None):
-        super().__init__(camera, ['background-removal'], 1)
+        super().__init__(camera, ['bg-view', 'bg-diff-blur'], 1)
         self.reset()
         self.pause()
         self._background = background
@@ -378,7 +388,6 @@ class BackgroundProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         '''Perform update on frame, carrying out algorithm'''
         #cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        return
         if self.avg_background is None:
             self.avg_background = np.empty(frame.shape, dtype=np.uint32)
             self.avg_background[:] = 0
@@ -391,14 +400,14 @@ class BackgroundProcessor(Processor):
             self._background = self.avg_background // max(1, self.count)
             self._background = self._background.astype(np.uint8)
             self._background = cv2.blur(self._background, (5,5))
-        #do max to protect against underflow
-        #return np.maximum(frame - self._background, self._blank)
         return
 
 
     async def decorate_frame(self, frame, name):
-        #return np.maximum(frame - self._background, self._blank)
-        #cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if name == 'bg-view':
+            return cv2.pyrDown(self.background)
+        if name =='bg-diff-blur':
+            return diff_blur(self.background, frame)
         return cv2.pyrDown(frame)
 
 class TrackerProcessor(Processor):
@@ -770,14 +779,6 @@ class SegmentProcessor(Processor):
             self._process_frame(frame, 0)
         yield from self.rect_iter
 
-    '''
-        Run absDiff to subtract the background from the frame, then normalize over each color channel
-    '''
-    def absDiff_background(self,frame):
-        image_diff = cv2.absdiff(self.background, frame)
-        #sum_diff = np.sum(image_diff, 2).astype(np.uint8)
-        sum_diff = cv2.medianBlur(image_diff, 9)
-        return sum_diff
 
     def _filter_background(self, frame, name = ''):
 
@@ -785,7 +786,7 @@ class SegmentProcessor(Processor):
         gray = cv2.UMat(img)
         #print('frame is type {} and self.background is type {}'.format(frame, self.background))
         if(self.background is not None):
-            gray = self.absDiff_background(gray)#img = cv2.subtract(img, self.background)
+            gray = diff_blur(self.background, frame, False)
         if name.find('bg-subtract') != -1:
             return gray
         if self.channel is None or True:
@@ -1459,20 +1460,9 @@ class LineDetectionProcessor(Processor):
 
         return lines
 
-    '''
-        Run absDiff to subtract the background from the frame, then normalize over each color channel
-    '''
-    def absDiff_background(self,frame):
-        image_diff = cv2.absdiff(self._background, frame)
-        sum_diff = np.sum(image_diff, 2).astype(np.uint8)
-        sum_diff = cv2.medianBlur(sum_diff, 9)
-        return sum_diff
 
-    '''
-    Call absDiff_background, use a binary threshold to create a mask
-    '''
     def threshold_background(self,frame):
-        sum_diff = self.absDiff_background(frame)
+        sum_diff = diff_blur(self._background, frame)
         # threshold this value- play with thresh_val in prod
         thresh_val = 45
         _,mask = cv2.threshold(sum_diff, thresh_val, 255, cv2.THRESH_BINARY)
