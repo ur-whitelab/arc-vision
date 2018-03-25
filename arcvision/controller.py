@@ -56,10 +56,15 @@ class Controller:
 
     def get_state_json(self):
         if self.settings['mode'] == 'training':
-            self.settings['training_poly_len'] = self.processors[0].poly_len
-            self.settings['training_rect_len'] = self.processors[0].rect_len
-            self.settings['training_rect_index'] = self.processors[0].rect_index
-            self.settings['training_poly_index'] = self.processors[0].poly_index
+            try:
+                self.settings['training_poly_len'] = self.processors[0].poly_len
+                self.settings['training_rect_len'] = self.processors[0].rect_len
+                self.settings['training_rect_index'] = self.processors[0].rect_index
+                self.settings['training_poly_index'] = self.processors[0].poly_index
+            except AttributeError:
+                #somehow we can end up here before we finished reset processors
+                #hack TODO: find out why
+                pass
         return json.dumps(self.__dict__, default=lambda x: '')
 
 

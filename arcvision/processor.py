@@ -724,19 +724,19 @@ class SegmentProcessor(Processor):
     def __init__(self, camera, background, stride, max_segments, max_rectangle=0.25, channel=None, hsv_delta=[100, 110, 16], name=None):#TODO: mess with this max_rectangle and see if that helps the big brect isues
         '''Pass stride = -1 to only process on request'''
         if(name is None):
-            name_str = ''
+            self.name_str = ''
         else:
-            name_str = name
+            self.name_str = name
         super().__init__(camera, [
 
-                                  name_str + 'bg-subtract',
-                                  name_str + 'bg-filter-blur',
-                                  name_str + 'bg-thresh',
-                                  name_str + 'bg-erode',
-                                  name_str + 'bg-open',
-                                  name_str + 'distance',
-                                  name_str + 'boxes',
-                                  name_str + 'watershed'
+                                  self.name_str + 'bg-subtract',
+                                  self.name_str + 'bg-filter-blur',
+                                  self.name_str + 'bg-thresh',
+                                  self.name_str + 'bg-erode',
+                                  self.name_str + 'bg-open',
+                                  self.name_str + 'distance',
+                                  self.name_str + 'boxes',
+                                  self.name_str + 'watershed'
                                   ], max(1, stride), name=name)
         self.rect_iter = range(0)
         self.background = background
@@ -821,7 +821,8 @@ class SegmentProcessor(Processor):
         dist_transform = cv2.normalize(dist_transform, dist_transform, 0, 255, cv2.NORM_MINMAX)
 
         #create distance tranform contours
-        dist_transform = np.uint8(cv2.UMat.get(dist_transform))
+        #dist_transform = np.uint8(cv2.UMat.get(dist_transform))
+        dist_transform = np.uint8(dist_transform)
         return dist_transform
 
     def _filter_ws_markers(self, frame):
@@ -926,18 +927,19 @@ class SegmentProcessor(Processor):
         return result
 
     async def decorate_frame(self, frame, name):
-        bg = self._filter_background(frame, name)
-        if name.find('bg') != -1:
+        if self.name_str not in name:
             return cv2.pyrDown(bg)
+        bg = self._filter_background(frame, name)
+
 
         dist_transform = self._filter_distance(bg)
-        if name == 'distance':
+        if 'distance' in name:
             return cv2.pyrDown(dist_transform)
 
-        if name == 'boxes':
-            for rect in self.rect_iter:#self._filter_contours(dist_transform, frame.shape):
+        if 'boxes' in name:
+            for rect in self._filter_contours(dist_transform, frame.shape):
                 draw_rectangle(frame, rect, (255, 255, 0), 1)
-        if name == 'watershed':
+        if 'watershed' in name:
             markers = self._filter_ws_markers(dist_transform)
             ws_markers = cv2.watershed(frame, markers)
             frame[ws_markers == -1] = (255, 0, 0)
@@ -1495,6 +1497,8 @@ class DialProcessor(Processor):
 
 
     def reset(self):
+        self.temperatureHandler = None
+        self.pressureHandler = None
         try:
             from .griffin_powermate import GriffinPowermate,DialHandler
             devices = GriffinPowermate.find_all()
@@ -1533,13 +1537,20 @@ class DialProcessor(Processor):
 
     def close(self):
         super().close()
-        self.temperatureHandler.close()
-        self.pressureHandler.close()
+        if self.temperatureHandler is not None:
+            self.temperatureHandler.close()
+        if self.pressureHandler is not None:
+            self.pressureHandler.close()
 
     def play(self):
-        self.pressureHandler.play()
-        self.temperatureHandler.play()
+        if self.temperatureHandler is not None:
+            self.temperatureHandler.play()
+        if self.pressureHandler is not None:
+            self.pressureHandler.play()
 
     def pause(self):
-        self.pressureHandler.pause()
-        self.temperatureHandler.pause()
+        if self.temperatureHandler is not None:
+            self.temperatureHandler.pause()
+        if self.pressureHandler is not None:
+            self.pressureHandler.pause()
+
