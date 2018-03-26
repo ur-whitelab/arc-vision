@@ -80,6 +80,7 @@ class Controller:
         self.background = None
         self.background_processor = BackgroundProcessor(self.cam)
         self.transform_processor = SpatialCalibrationProcessor(self.cam, delay=5, stay=10, segmenter=DarkflowSegmentProcessor(self.cam))
+        #self.transform_processor = SpatialCalibrationProcessor(self.cam, background=self.background)
         self.reserved_processors = [self.transform_processor]
 
         await self.update_settings(self.settings)

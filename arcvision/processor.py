@@ -193,7 +193,11 @@ class SpatialCalibrationProcessor(Processor):
         data['{}x{}'.format(self.frameWidth, self.frameHeight)] = subData
         print(f'Writing calibration to {filepath}')
         #make sure directory is ready
-        os.makedirs(filepath.parent)
+        try:
+            os.makedirs(filepath.parent)
+        except FileExistsError:
+            #OK if it exists
+            pass
         pickle.dump(data, open(filepath, 'wb'))
 
     def pause(self):
@@ -399,7 +403,7 @@ class BackgroundProcessor(Processor):
             self.count += 1
             self._background = self.avg_background // max(1, self.count)
             self._background = self._background.astype(np.uint8)
-            self._background = cv2.blur(self._background, (5,5))
+            #self._background = cv2.blur(self._background, (5,5))
         return
 
 
@@ -427,6 +431,7 @@ class TrackerProcessor(Processor):
         self.do_tracking = do_tracking #this should only be False if we're using darkflow
         self.labels = {}
         self.stride = stride
+        self.ticks = 0
         if(do_tracking):
             self.optflow = cv2.DualTVL1OpticalFlow_create()#use dense optical flow to track
         self.detect_interval = 3
@@ -450,7 +455,6 @@ class TrackerProcessor(Processor):
             self.lineDetector = None
         # need to keep our own ticks because
         # we don't know frame index when track() is called
-        self.ticks = 0
         if detector_stride > 0:
             self.ticks_per_obs = detector_stride * delete_threshold_period /self.stride
 
@@ -928,7 +932,7 @@ class SegmentProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         if self.name_str not in name:
-            return cv2.pyrDown(bg)
+            return cv2.pyrDown(frame)
         bg = self._filter_background(frame, name)
 
 
