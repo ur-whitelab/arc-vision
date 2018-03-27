@@ -451,7 +451,7 @@ class TrackerProcessor(Processor):
         self.max_obs_possible = 24
         # set up line detector
         if detectLines:
-             self.lineDetector = LineDetectionProcessor(camera,stride*2,background)
+             self.lineDetector = LineDetectionProcessor(camera,stride,background)
         else:
             self.lineDetector = None
         # need to keep our own ticks because
@@ -1308,7 +1308,7 @@ class LineDetectionProcessor(Processor):
     ''' Detects drawn lines on an image (NB: works with a red marker or paper strip)
         This will not return knowledge of connections between reactors (that logic should be in DetectionProcessor or TrackerProcessor, which this class should be controlled by)
     '''
-    def __init__(self, camera, stride, background, obsLimit = 7):
+    def __init__(self, camera, stride, background, obsLimit = 5):
         super().__init__(camera, ['image-segmented','lines-detected'],stride)
         self._lines = [] # initialize as an empty array - list of dicts that contain endpoints, slope, intercept
         # preprocess the background image to help with raster noise

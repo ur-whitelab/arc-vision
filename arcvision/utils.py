@@ -250,5 +250,5 @@ def diff_blur(frame1, frame2, grayscale=True):
     img = cv2.absdiff(frame1, frame2)
     if grayscale:
         img = np.sum(img, 2).astype(np.uint8)
-    img = cv2.medianBlur(img, 5)
+    img = cv2.medianBlur(img, 7)
     return img
