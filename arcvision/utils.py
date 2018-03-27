@@ -246,9 +246,9 @@ def darkflow_to_rect(df):
     rect = [ df['topleft']['x'], df['topleft']['y'], df['bottomright']['x'] - df['topleft']['x'], df['bottomright']['y'] - df['topleft']['y'] ]
     return rect
 
-def diff_blur(frame1, frame2, do_sum=True):
+def diff_blur(frame1, frame2, grayscale=True):
     img = cv2.absdiff(frame1, frame2)
-    if do_sum:
+    if grayscale:
         img = np.sum(img, 2).astype(np.uint8)
-    img = cv2.medianBlur(img, 9)
+    img = cv2.medianBlur(img, 5)
     return img

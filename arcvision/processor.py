@@ -358,7 +358,7 @@ class SpatialCalibrationProcessor(Processor):
                 'Homography Fit: {}'.format(self.fit),
                 (100, 250),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,124,255))
-        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     @property
     def objects(self):
@@ -409,10 +409,10 @@ class BackgroundProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         if name == 'bg-view':
-            return cv2.pyrDown(self.background)
+            return self.background
         if name =='bg-diff-blur':
             return diff_blur(self.background, frame)
-        return cv2.pyrDown(frame)
+        return frame
 
 class TrackerProcessor(Processor):
 
@@ -425,10 +425,11 @@ class TrackerProcessor(Processor):
             return self._tracking
 
 
-    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True):
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True, alpha=0.8):
         super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
         self.do_tracking = do_tracking #this should only be False if we're using darkflow
+        self.alpha = alpha
         self.labels = {}
         self.stride = stride
         self.ticks = 0
@@ -473,8 +474,8 @@ class TrackerProcessor(Processor):
         delete = []
 
         if(self.do_tracking):
-            smaller_frame = cv2.pyrDown(frame)
-            smaller_frame = cv2.pyrDown(smaller_frame)#4x downsampling
+            smaller_frame = frame
+            smaller_frame = smaller_frame#4x downsampling
             smaller_frame = cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
             gray = smaller_frame#cv2.UMat(smaller_frame)
             if(self.prev_gray is None):
@@ -645,10 +646,10 @@ class TrackerProcessor(Processor):
         return (array * [shape[1], shape[0]]).astype(np.int32)
 
     async def decorate_frame(self, frame, name):
-        smaller_frame = cv2.pyrDown(frame)
+        smaller_frame = frame
         if name == 'line-segmentation':
             frame = self.lineDetector.threshold_background(frame)
-            return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         if name != 'track':
             return  smaller_frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -675,11 +676,11 @@ class TrackerProcessor(Processor):
                 cv2.circle(frame, (endpoints[0][0],endpoints[0][1]), 3 , (255,0,0), -1)#BGR
                 cv2.circle(frame, (endpoints[1][0],endpoints[1][1]), 3 , (0,255,0), -1)#BGR
 
-        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def track(self, frame, brect, poly, label, id_num, temperature = 298):
         '''
-        Track a newly found object
+        Track a newly found object (returns True), or return False for an existing object.
         '''
 
         center = poly_scaled_center(poly, frame) if (poly is not None and cv2.contourArea(poly) < rect_area(brect)) else rect_scaled_center(brect, frame)
@@ -692,9 +693,9 @@ class TrackerProcessor(Processor):
         for t in self._tracking:
             if  t['name'] == '{}-{}'.format(label, id_num) or intersecting_rects(t['brect'], brect): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
-                t['center_scaled'] = center
+                t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self.alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
                 t['brect'] = brect
-                return
+                return False
 
 
         name = '{}-{}'.format(label, id_num)
@@ -932,13 +933,13 @@ class SegmentProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         if self.name_str not in name:
-            return cv2.pyrDown(frame)
+            return frame
         bg = self._filter_background(frame, name)
 
 
         dist_transform = self._filter_distance(bg)
         if 'distance' in name:
-            return cv2.pyrDown(dist_transform)
+            return dist_transform
 
         if 'boxes' in name:
             for rect in self._filter_contours(dist_transform, frame.shape):
@@ -947,7 +948,7 @@ class SegmentProcessor(Processor):
             markers = self._filter_ws_markers(dist_transform)
             ws_markers = cv2.watershed(frame, markers)
             frame[ws_markers == -1] = (255, 0, 0)
-        return cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
 class TrainingProcessor(Processor):
@@ -1011,7 +1012,7 @@ class TrainingProcessor(Processor):
                 cv2.polylines(frame_view, [p], True, (60, 60, 60), 1)
             cv2.polylines(frame_view, [self.poly], True, (0, 0, 255), 3)
 
-        return cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def capture(self, frame, label):
         '''Capture and store the current image'''
@@ -1111,7 +1112,7 @@ class DetectionProcessor(Processor):
     async def decorate_frame(self, frame, name):
 
         if name != 'keypoints' and name != 'identify':
-            return cv2.pyrDown(frame)
+            return frame
 
         # draw key points
         for rect in self.segmenter.segments(frame):
@@ -1123,7 +1124,7 @@ class DetectionProcessor(Processor):
             draw_rectangle(frame, rect, (255, 0, 0), 1)
 
         if name == 'keypoints':
-            return cv2.pyrDown(frame)
+            return frame
         for n in self.features:
             for f in self.features[n]:
                 color = f['color']
@@ -1132,7 +1133,7 @@ class DetectionProcessor(Processor):
                 for p,c in zip(kp, kpcolor):
                     cv2.circle(frame, tuple(p), 6, color, thickness=-1)
 
-        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     async def _identify_features(self, frame, frame_ind):
         self._ready = False
@@ -1229,7 +1230,7 @@ class DetectionProcessor(Processor):
         return features
 
 class DarkflowSegmentProcessor(Processor):
-    def __init__(self, camera, stride=1, threshold=0.8):
+    def __init__(self, camera, stride=1, threshold=0.1):
         self.tfnet = load_darkflow('dot-tracking', gpu=1.0, threshold=threshold)
         super().__init__(camera, ['segment'], stride)
 
@@ -1255,6 +1256,7 @@ class DarkflowDetectionProcessor(Processor):
     def __init__(self, camera, background, stride=3,
                  threshold=0.1, track=True):
         self.tfnet = load_darkflow('reactor-tracking', gpu=1.0, threshold=threshold)
+        self.id_i = 1000#skip over 0 thru 999
         #we have a specific order required
         #set-up our tracker
         # give estimate of our stride
@@ -1280,13 +1282,14 @@ class DarkflowDetectionProcessor(Processor):
 
     async def process_frame(self, frame, frame_ind):
         result = self.tfnet.return_predict(frame)#get a dict of detected items with labels and confidences.
-        id_i = 1 #this is a workaround for now
         for item in result:
             brect = darkflow_to_rect(item)
             label = item['label']
-            id_num = id_i
-            self.tracker.track(frame, brect, None, label, id_num)
-            id_i += 1
+            id_num = self.id_i
+            new_obj = self.tracker.track(frame, brect, None, label, id_num)
+            if(new_obj):
+                self.id_i += 1
+
         return
 
     async def decorate_frame(self, frame, name):
@@ -1298,7 +1301,7 @@ class DarkflowDetectionProcessor(Processor):
                         '{}: {}'.format(item['name'], item['observed']),
                         (0, 60 * (i+1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255))
-        return cv2.pyrDown(frame)
+        return frame
 
 
 class LineDetectionProcessor(Processor):
@@ -1326,13 +1329,13 @@ class LineDetectionProcessor(Processor):
         return
 
     async def decorate_frame(self, frame, name):
-        smaller_frame = cv2.pyrDown(frame)
+        smaller_frame = frame
         if name != 'image-segmented' or name != 'lines-detected':
             return  smaller_frame#cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
 
         if name == 'image-segmented':
             bg = self.threshold_background(frame)
-            return  cv2.pyrDown(bg)#cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
+            return  bg#cv2.cvtColor(smaller_frame, cv2.COLOR_BGR2GRAY)
 
         # if name == 'lines-detected':
         #     print('Adding the points')
@@ -1341,7 +1344,7 @@ class LineDetectionProcessor(Processor):
             cv2.circle(frame, (self._lines[i][0][0], self._lines[i][0][1]), (255,0,255),-1)
             cv2.circle(frame, (self._lines[i][1][0], self._lines[i][1][1]), (255,0,255),-1)
 
-        return  cv2.pyrDown(frame)#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
     '''
@@ -1446,23 +1449,15 @@ class LineDetectionProcessor(Processor):
 
                 # we want a thin object, so a small aspect ratio.
                 aspect_ratio_thresh = 0.3
-                area_thresh_upper = 20000
-                area_thresh_lower = 200
-                width_thresh = 30
-                length_thresh_lower = 75
-                length_thresh_upper = 600
+                area_thresh_upper = 0.02 * frame.shape[0] * frame.shape[1]
+                area_thresh_lower = 0.0002 * frame.shape[0] * frame.shape[1]
+                width_thresh = 0.04 * frame.shape[0]
+                length_thresh_lower = 0.05 * frame.shape[0]
+                length_thresh_upper = 0.4 * frame.shape[0]
                 if (aspectRatio < aspect_ratio_thresh and val_in_range(area, area_thresh_lower, area_thresh_upper) and minDim < width_thresh and val_in_range(maxDim, length_thresh_lower, length_thresh_upper)):
-                    # only do vertex calculation if it is the correct shape
+                    # only keep endpoints if it is the correct shape
                     endpoints = rect_to_endpoints(rect)
-                    transpose_shape = np.flip(np.array(mask.shape),0)
-                    ep1_scaled = endpoints[0]/transpose_shape
-                    ep2_scaled = endpoints[1]/transpose_shape
-
-                    # only accept lines that are within the 5%-95% bounds of the frame
-                    ep1_within_bound = (min(ep1_scaled) > .05 and max(ep1_scaled) < .95)
-                    ep2_within_bound = (min(ep2_scaled) > .05 and max(ep2_scaled) < .95)
-                    if (ep1_within_bound and ep2_within_bound):
-                        lines.append(endpoints)
+                    lines.append(endpoints)
 
         return lines
 
@@ -1537,7 +1532,7 @@ class DialProcessor(Processor):
 
     async def decorate_frame(self, frame, name):
         # Not going to do anything here
-        return cv2.pyrDown(frame)
+        return frame
 
     def close(self):
         super().close()

@@ -44,10 +44,10 @@ class Camera:
         # could be mp4 file, so catch error
         try:
             #self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,1920)#1280
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,1080)#720
-            #self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)#800
-            #self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720)#450
+            #self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,1920)#1280
+            #self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,1080)#720
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)#800
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720)#450
             self.cap.set(cv2.CAP_PROP_FPS, 60)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
             self.cap.set(cv2.CAP_PROP_HUE, 1.0)
@@ -94,7 +94,6 @@ class Camera:
             if frame_ind % p.stride == 0:
                 #process frame
                 #startTime = time.time()
-                self.frame = frame
                 await p.process_frame(frame, frame_ind)
                 #endTime = time.time()
                 #elp = endTime - startTime
@@ -108,7 +107,7 @@ class Camera:
                     'Processor {} modified frame channel from {} to {}'.format(type(p), start_dims, self.frame.shape)
             #if we are updating the decorated frame, then we must
             if(i < self.decorate_index and update_decorated):
-                decorated_frame = await p.decorate_frame(frame, self.decorate_name)
+                decorated_frame = await p.decorate_frame(decorated_frame, self.decorate_name)
 
                 # lots of steps, if we lose color channel add it back
                 #if(len(decorated_frame.shape) == 2):
@@ -116,7 +115,7 @@ class Camera:
 
                 if decorated_frame is None:
                     'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
-                    decorated_frame = frame
+                    decorated_frame = frame.copy()
         if self.output is not None:
             if type(self.output) == str:
                 print('Beginning to write to {}'.format(self.output))
