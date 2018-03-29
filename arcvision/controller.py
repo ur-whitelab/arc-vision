@@ -218,7 +218,7 @@ class Controller:
     async def update_loop(self):
         startTime = time.time()
         state = await self.update_state()
-        #print(self.vision_state)
+        #print('vision state is ', self.vision_state)
         if state is not None:
             await self.pub_sock.send_multipart(['vision-update'.encode(), state.SerializeToString()])
             #exponential moving average of update frequency

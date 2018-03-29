@@ -190,7 +190,14 @@ def rect_color_channel(frame, rect):
 
 def percent_diff(existingItem, newItem):
     #TODO: fix so this is robust to 'existingItem' being near-zero, or move to some other comparison
-    return float(newItem-existingItem)/existingItem
+    if(abs(existingItem) > 0.0):
+        return float(newItem-existingItem)/existingItem
+    elif(abs(newItem) > 0.0):
+        return float(existingItem-newItem)/newItem
+    else:#both are 0?
+        return(0.0)
+
+
 
 def rect_to_endpoints(rect):
     '''Lazy implementation of finding endpoints of a bounding rectangle.  Find the vertices, use the lowest and its hypoteneuse'''
