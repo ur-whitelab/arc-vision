@@ -82,6 +82,7 @@ class Camera:
         '''Process the frames. We only update the decorated frame when necessary'''
 
         # we will update if we are at raw always
+        decorated_frame = None
         update_decorated = self.decorate_index == 0
         if self.decorate_index > 0:
             #check if the requested decorated frame will be updated
@@ -110,8 +111,8 @@ class Camera:
                 decorated_frame = await p.decorate_frame(decorated_frame, self.decorate_name)
 
                 # lots of steps, if we lose color channel add it back
-                #if(len(decorated_frame.shape) == 2):
-                #    decorated_frame = cv2.cvtColor(decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+                if decorated_frame is not None and len(decorated_frame.shape) == 2:
+                    decorated_frame = cv2.cvtColor(decorated_frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
                 if decorated_frame is None:
                     'Processer {} returned None on Decorate Frame {}'.format(type(p).__name__, self.frame_ind)
@@ -121,7 +122,10 @@ class Camera:
                 print('Beginning to write to {}'.format(self.output))
                 fourcc = cv2.VideoWriter_fourcc(*'MJPG')
                 self.output = cv2.VideoWriter(self.output, fourcc, 30.0, (self.frame.shape[1],self.frame.shape[0]))
-            self.output.write(self.frame)
+            if decorated_frame is not None:
+                self.output.write(decorated_frame)
+            else:
+                self.output.write(self.decorated_frame)
         if update_decorated:
             self.decorated_frame = decorated_frame
         self.sem.release()
