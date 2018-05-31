@@ -2,12 +2,17 @@ import zmq, time, argparse, asyncio, glob, os, sys, copy, json
 import zmq.asyncio
 from .camera import Camera
 from .server import start_server
-from .processor import *
 from .utils import *
 from .projector import Projector
 from multiprocessing import freeze_support
 from .protobufs.graph_pb2 import Graph
 
+from .background_processor import BackgroundProcessor
+from .spatial_calibration_processor import SpatialCalibrationProcessor
+from .dark_flow_detection_processor import DarkflowDetectionProcessor
+from .detection_processor import DetectionProcessor
+from .dark_flow_detection_processor import DarkflowDetectionProcessor
+from .training_processor import TrainingProcessor
 
 zmq.asyncio.install()
 
