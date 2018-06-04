@@ -2,11 +2,8 @@ import numpy as np
 import asyncio, cv2
 from .utils import *
 
-# from processor import Processor
 from .processor import Processor
-
 from .tracker_processor import TrackerProcessor
-
 from .segment_processor import SegmentProcessor
 
 

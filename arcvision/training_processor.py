@@ -2,9 +2,7 @@ import numpy as np
 import cv2
 from .utils import *
 
-# from processor import Processor
 from .processor import Processor
-
 from .segment_processor import SegmentProcessor
 
 class TrainingProcessor(Processor):

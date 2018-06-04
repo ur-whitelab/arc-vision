@@ -2,11 +2,8 @@ import numpy as np
 import sys, cv2
 from .utils import *
 
-# from processor import Processor
 from .processor import Processor
-
 from .line_detection_processor import LineDetectionProcessor
-
 from .dial_processor import DialProcessor
 
 class TrackerProcessor(Processor):
@@ -20,11 +17,11 @@ class TrackerProcessor(Processor):
             return self._tracking
 
 
-    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True, alpha=0.8):
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True, k=0.8):
         super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
         self.do_tracking = do_tracking #this should only be False if we're using darkflow
-        self.alpha = alpha
+        self.k = k #this is the spring constant
         self.labels = {}
         self.stride = stride
         self.ticks = 0
@@ -51,6 +48,7 @@ class TrackerProcessor(Processor):
             self.lineDetector = None
         # need to keep our own ticks because
         # we don't know frame index when track() is called
+        delete_threshold_period = 0.5
         if detector_stride > 0:
             self.ticks_per_obs = detector_stride * delete_threshold_period /self.stride
 
@@ -288,7 +286,7 @@ class TrackerProcessor(Processor):
         for t in self._tracking:
             if  t['name'] == '{}-{}'.format(label, id_num) or intersecting_rects(t['brect'], brect): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
-                t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self.alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
+                t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
                 t['brect'] = brect
                 return False
 
