@@ -3,14 +3,8 @@ from .utils import *
 from multiprocessing import Process, Pipe, Lock
 
 SOURCE_ID = 0
-CONDITIONS_ID = 999
-OBJECT_ID = 1 # 0 and 999 are reserved for temperature
 SENTINEL = -1 
 
-def object_id():
-    global OBJECT_ID
-    OBJECT_ID += 1
-    return OBJECT_ID
 
 class Processor:
     '''A camera processor'''

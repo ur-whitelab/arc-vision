@@ -5,9 +5,9 @@ from .utils import *
 # from processor import Processor
 from .processor import Processor
 
-from line_detection_processor import LineDetectionProcessor
+from .line_detection_processor import LineDetectionProcessor
 
-from dial_processor import DialProcessor
+from .dial_processor import DialProcessor
 
 class TrackerProcessor(Processor):
 
