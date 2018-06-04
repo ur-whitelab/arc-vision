@@ -3,6 +3,7 @@ from .utils import *
 # from processor import Processor
 from .processor import Processor
 
+CONDITIONS_ID = 999
 
 class DialProcessor(Processor):
     ''' Class to handle sending the pressure and temperature data to the graph. Does no image processing '''
