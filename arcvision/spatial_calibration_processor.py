@@ -6,7 +6,7 @@ from .utils import *
 # from processor import Processor
 from .processor import Processor
 
-from segment_processor import SegmentProcessor
+from .segment_processor import SegmentProcessor
 
 
 class SpatialCalibrationProcessor(Processor):

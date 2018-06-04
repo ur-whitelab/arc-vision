@@ -259,3 +259,10 @@ def diff_blur(frame1, frame2, grayscale=True):
         img = np.sum(img, 2).astype(np.uint8)
     img = cv2.medianBlur(img, 7)
     return img
+
+OBJECT_ID = 1 # 0 and 999 are reserved for temperature
+
+def object_id():
+    global OBJECT_ID
+    OBJECT_ID += 1
+    return OBJECT_ID
