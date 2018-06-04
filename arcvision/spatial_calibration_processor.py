@@ -3,9 +3,7 @@ from numpy import linalg
 import os, pickle, pathlib
 from .utils import *
 
-# from processor import Processor
 from .processor import Processor
-
 from .segment_processor import SegmentProcessor
 
 

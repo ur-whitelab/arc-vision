@@ -2,7 +2,6 @@ import numpy as np
 import cv2
 import asyncio
 
-# from processor import Processor
 from .processor import Processor
 
 

@@ -1,6 +1,5 @@
 from .utils import *
 
-# from processor import Processor
 from .processor import Processor
 
 CONDITIONS_ID = 999
