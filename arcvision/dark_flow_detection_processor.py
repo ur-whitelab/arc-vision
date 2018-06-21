@@ -3,7 +3,7 @@ from .utils import *
 
 from .processor import Processor
 
-from .tracker_processor import TrackerProcessor 
+from .tracker_processor import TrackerProcessor
 
 
 class DarkflowDetectionProcessor(Processor):
@@ -16,7 +16,7 @@ class DarkflowDetectionProcessor(Processor):
         #set-up our tracker
         # give estimate of our stride
         if track:
-            self.tracker = TrackerProcessor(camera, stride,  background,  delete_threshold_period=5, do_tracking = False)
+            self.tracker = TrackerProcessor(camera, stride,  background,  delete_threshold_period=2, do_tracking = False)
         else:
             self.tracker = None
 

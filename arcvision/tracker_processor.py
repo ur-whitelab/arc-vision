@@ -17,11 +17,11 @@ class TrackerProcessor(Processor):
             return self._tracking
 
 
-    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True, k=0.8):
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True, alpha=0.8):
         super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
         self.do_tracking = do_tracking #this should only be False if we're using darkflow
-        self.k = k #this is the spring constant
+        self.alpha = alpha #this is the spring constant
         self.labels = {}
         self.stride = stride
         self.ticks = 0
@@ -48,7 +48,6 @@ class TrackerProcessor(Processor):
             self.lineDetector = None
         # need to keep our own ticks because
         # we don't know frame index when track() is called
-        delete_threshold_period = 0.5
         if detector_stride > 0:
             self.ticks_per_obs = detector_stride * delete_threshold_period /self.stride
 
@@ -248,8 +247,6 @@ class TrackerProcessor(Processor):
             return  smaller_frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         for i,t in enumerate(self._tracking):
-            if(t['observed'] < 3):
-                continue
             center_pos = tuple(np.array(self._unscale_point(t['center_scaled'], frame.shape)).astype(np.int32))
             #print('the center position is {}'.format(center_pos))
             cv2.circle(frame,center_pos, 10, (0,0, 255), -1)#draw red dots at centers of each polygon
