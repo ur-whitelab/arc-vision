@@ -48,7 +48,6 @@ class TrackerProcessor(Processor):
             self.lineDetector = None
         # need to keep our own ticks because
         # we don't know frame index when track() is called
-        delete_threshold_period = 0.5
         if detector_stride > 0:
             self.ticks_per_obs = detector_stride * delete_threshold_period /self.stride
 
@@ -286,8 +285,20 @@ class TrackerProcessor(Processor):
         for t in self._tracking:
             if  t['name'] == '{}-{}'.format(label, id_num) or intersecting_rects(t['brect'], brect): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
-                t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
+                # t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
                 t['brect'] = brect
+                
+                #using a spring-like system in order to more quickly determine the reactor position; reduces lag by position prediction.
+                delta_dist = [t['center_scaled'][0] - center[0], center[1] - t['center_scaled'][1]] #note: this dist has two components [x,y].
+                #the self.k value as used below is actually k/mass, but because mass is an arbitrary parameter, it's only necessary to adjust one variable (i.e. k).
+                acceleration = self.k * delta_dist
+                delta_t = 1.0/50.0 #this is not going to always be accurate. It's more so an estimate of fps.
+                velocity = acceleration * delta_t 
+                if(np.abs(velocity) > 0.01): #this ensures there's a 'real' position move (i.e. not jitters due to re-reading the same position)
+                    t['center_scaled'] = velocity * delta_t #the new, estimated position based on velocity
+                    #Potential TODO: might need to make a 'check' here if the newly estimated position is going to be off the screen. 
+                else:
+                    t['center_scaled'] = center
                 return False
 
 
