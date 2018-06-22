@@ -247,8 +247,6 @@ class TrackerProcessor(Processor):
             return  smaller_frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         for i,t in enumerate(self._tracking):
-            if(t['observed'] < 3):
-                continue
             center_pos = tuple(np.array(self._unscale_point(t['center_scaled'], frame.shape)).astype(np.int32))
             #print('the center position is {}'.format(center_pos))
             cv2.circle(frame,center_pos, 10, (0,0, 255), -1)#draw red dots at centers of each polygon
