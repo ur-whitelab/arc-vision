@@ -290,9 +290,9 @@ class TrackerProcessor(Processor):
                 
                 #using a spring-like system in order to more quickly determine the reactor position; reduces lag by position prediction.
                 delta_dist = [t['center_scaled'][0] - center[0], center[1] - t['center_scaled'][1]] #note: this dist has two components [x,y].
-                #the self.k value as used below is actually k/mass, but because mass is an arbitrary parameter, it's only necessary to adjust one variable (i.e. k).
+                # F = m * a = k * delta_dist ---> a = (k/m) * delta_dist. The self.k value used below represents k/mass. 
                 acceleration = self.k * delta_dist
-                delta_t = 1.0/50.0 #this is not going to always be accurate. It's more so an estimate of fps.
+                delta_t = 1.0/50.0 #this is not going to always be accurate. It's more so an estimate of the average fps.
                 velocity = acceleration * delta_t 
                 if(np.abs(velocity) > 0.01): #this ensures there's a 'real' position move (i.e. not jitters due to re-reading the same position)
                     t['center_scaled'] = velocity * delta_t #the new, estimated position based on velocity
