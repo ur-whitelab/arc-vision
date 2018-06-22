@@ -283,8 +283,20 @@ class TrackerProcessor(Processor):
         for t in self._tracking:
             if  t['name'] == '{}-{}'.format(label, id_num) or intersecting_rects(t['brect'], brect): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
-                t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
+                # t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
                 t['brect'] = brect
+                
+                #using a spring-like system in order to more quickly determine the reactor position; reduces lag by position prediction.
+                delta_dist = [t['center_scaled'][0] - center[0], center[1] - t['center_scaled'][1]] #note: this dist has two components [x,y].
+                # F = m * a = k * delta_dist ---> a = (k/m) * delta_dist. The self.k value used below represents k/mass. 
+                acceleration = self.k * delta_dist
+                delta_t = 1.0/50.0 #this is not going to always be accurate. It's more so an estimate of the average fps.
+                velocity = acceleration * delta_t 
+                if(np.abs(velocity) > 0.01): #this ensures there's a 'real' position move (i.e. not jitters due to re-reading the same position)
+                    t['center_scaled'] = velocity * delta_t #the new, estimated position based on velocity
+                    #Potential TODO: might need to make a 'check' here if the newly estimated position is going to be off the screen. 
+                else:
+                    t['center_scaled'] = center
                 return False
 
 
