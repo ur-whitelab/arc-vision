@@ -17,11 +17,11 @@ class TrackerProcessor(Processor):
             return self._tracking
 
 
-    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True, alpha=0.8):
+    def __init__(self, camera, detector_stride, background, delete_threshold_period=1.0, stride=2, detectLines = True, readDials = True, do_tracking = True, k=2000):
         super().__init__(camera, ['track','line-segmentation'], stride)
         self._tracking = []
         self.do_tracking = do_tracking #this should only be False if we're using darkflow
-        self.alpha = alpha #this is the spring constant
+        self.k = k #this is the spring constant
         self.labels = {}
         self.stride = stride
         self.ticks = 0
@@ -284,8 +284,20 @@ class TrackerProcessor(Processor):
         for t in self._tracking:
             if  t['name'] == '{}-{}'.format(label, id_num) or intersecting_rects(t['brect'], brect): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
-                t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
+                # t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
                 t['brect'] = brect
+
+                #using a spring-like system in order to more quickly determine the reactor position; reduces lag by position prediction.
+                delta_dist = [center[0] - t['center_scaled'][0], center[1] - t['center_scaled'][1]] #note: this dist has two components [x,y].
+                #F = m * a = k * delta_dist - c * vel ---> a = (k/m) * delta_dist - (c/m) * vel. The self.k and c values used below represent k/mass and c/mass.
+                c = 0.2
+                accel = (self.k * delta_dist[0] - c * t['velocity_current'][0], self.k * delta_dist[1] - c * t['velocity_current'][1])
+                delta_t = 1.0/55.0 #this is not going to always be accurate. It's more so an estimate of the average fps.
+
+                t['velocity_next'] = [delta_t * accel[0] + t['velocity_current'][0], delta_t * accel[1] + t['velocity_current'][1]]
+                t['center_scaled'] = [delta_t * t['velocity_next'][0] + t['center_scaled'][0], delta_t * t['velocity_next'][1] + t['center_scaled'][1]] #the new, estimated position based on velocity
+                t['velocity_current'] = t['velocity_next']
+
                 return False
 
 
@@ -312,6 +324,9 @@ class TrackerProcessor(Processor):
                      'delta': np.int32([0,0]),
                      'id': id_num,
                      'connectedToPrimary': [],
-                     'weight':[temperature,1]}
+                     'weight':[temperature,1],
+                     'velocity_current': (0,0), #not initially moving
+                     'velocity_next': (0,0),
+                     'acceleration': (0,0)}
         self._tracking.append(track_obj)
         return True
