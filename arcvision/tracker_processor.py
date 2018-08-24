@@ -1,6 +1,7 @@
 import numpy as np
 import sys, cv2
 from .utils import *
+import time
 
 from .processor import Processor
 from .line_detection_processor import LineDetectionProcessor
@@ -284,8 +285,16 @@ class TrackerProcessor(Processor):
         for t in self._tracking:
             if  t['name'] == '{}-{}'.format(label, id_num) or intersecting_rects(t['brect'], brect): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
-
                 t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
+
+                #NOTE: This is useful code for getting time however it will (annoyingly) reset at t=0.0 if a new object is spawned for what is actually a single object...
+                #... in which this involves correction calculations de facto that could be inaccurate. Therefore, only time.time() is used with calculations after data collected.
+                # if t['time_start'] is None:
+                #     t['time_start'] = time.time()
+                #     t['time_tot'] = 0
+                # t['time_tot'] = time.time() - t['time_start']
+
+                # print('time: {} at observed_center: {} & center_scaled: {}'.format(time.time(), center, t['center_scaled']))
                 t['brect'] = brect
 
                 return False
@@ -314,6 +323,8 @@ class TrackerProcessor(Processor):
                      'delta': np.int32([0,0]),
                      'id': id_num,
                      'connectedToPrimary': [],
-                     'weight':[temperature,1]}
+                     'weight':[temperature,1],
+                     'time_start': None,
+                     'time_tot': None}
         self._tracking.append(track_obj)
         return True
