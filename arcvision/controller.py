@@ -228,6 +228,7 @@ class Controller:
             await self.pub_sock.send_multipart(['vision-update'.encode(), state.SerializeToString()])
             #exponential moving average of update frequency
             self.frequency = self.frequency * 0.8 +  0.2 / (time.time() - startTime)
+            #print(self.frequency)
 
     def sync_objects(self):
         remove = []

@@ -1,4 +1,7 @@
 import numpy as np
+from numpy import dot as dot
+from numpy.linalg import inv as inverse
+
 import sys, cv2
 from .utils import *
 import time
@@ -269,6 +272,56 @@ class TrackerProcessor(Processor):
 
         return  frame#cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+    def KF_predict(self, X_prior2, X_prior, P_prior, F, F_P, Q, u, B):
+        '''**INPUT:**
+        X_prior2: the final output state, X, at the second to most recent timestep
+        X_prior: The final output state, X, at the previous timestep
+        P_prior: The state covariance matrix from the previous timestep
+        F: The state "transition" matrix  that is based off of the linear dynamic system
+        Q: The process noise covariance matrix
+        u: A variable not part of the state but that impacts the state X
+        B: Takes the input vector and puts into format that can be applied
+
+        **OUTPUT:**
+        X_intermediate: the initially predicted state of X
+        P_intermediate: the initially predicted covariance matrix of the state, X
+        NOTE: The above two output variables must be passed through KF_update_step to have a decently accurate
+        prediction of the true value'''
+
+        #Note: the X below is just the *initially* predicted state, which still needs to go through the update step
+        X_prior = np.matrix([[X_prior[0,0]], [X_prior2[0,0]]])
+        X_intermediate = dot(F, X_prior) + dot(B, u)
+        P_intermediate = dot(F_P, dot(P_prior, F_P.T)) + Q
+        return (X_intermediate, P_intermediate)
+
+    def KF_update(self, X_intermediate, P_intermediate, Z, H, R):
+        '''**INPUT:**
+        X_intermediate: The *initially* predicted state based on previous state
+        P_intermediate: The *initially* predicted covariance matrix of state X
+        Z: The observed measurement
+        H: Maps the observed measurement into the appropriate scale/units
+        R: The measurement noise covariance matrix
+
+        **LOCAL VARIABLES:**
+        X_mean: the mean of the state, with corrected scale/units
+        X_covar: the covariance of the state, with corrected scale/units
+        K_gain: the Kalman Filter gain, which determines how much correction is needed
+
+        **OUTPUT:**
+        X_final: the final *corrected/updated* predicted state at current timestep
+        P_final: the final *corrected/updated* state covariance matrix
+        (Note that these essentially become X_prior and P_prior when inputed into KF_predict_step for the next timestep.)
+        '''
+
+        X_mean = dot(H, X_intermediate)
+        X_covar = dot(H, dot(P_intermediate, H.T))
+
+        K_gain = dot(P_intermediate, dot(H.T, inverse(X_covar + R)))
+
+        X_final = X_intermediate + dot(K_gain, (Z - X_mean))
+        P_final = P_intermediate - dot(K_gain, dot(H, K_gain.T))
+        return (X_final, P_final)
+
     def track(self, frame, brect, poly, label, id_num, temperature = 298):
         '''
         Track a newly found object (returns True), or return False for an existing object.
@@ -282,21 +335,48 @@ class TrackerProcessor(Processor):
             temperature = 298
         #we need to make sure we don't have an existing object here
         i=0
+
+        #CONSTANT Kalman Filter vars:
+        identity_matrix = np.matrix([1])
+        u = np.matrix([0])
+        B = identity_matrix #We are not considering u, so with that in mind, this was simply set as the identity matrix
+        H = identity_matrix #The scale/units of the state are as we want them, so this is simply the identity matrix
+        dampening_const = 1.0 #range: (0.0, 1.0]. Most likely it would be within (0.90, 1.00]
+        F = np.matrix([(1+dampening_const), (-1*dampening_const)])
+        F_P = np.matrix([1])
+        Q = np.matrix([0])
+        R_x = np.matrix([0.008256807930521852])
+        R_y = np.matrix([0.009095864372886798])
+
         for t in self._tracking:
             if  t['name'] == '{}-{}'.format(label, id_num) or intersecting_rects(t['brect'], brect): #found already existing reactor
                 t['observed'] = self.ticks_per_obs
-                t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
+                # t['center_scaled'] = [t['center_scaled'][0] * (1.0 - self.alpha) + center[0] * self.alpha, t['center_scaled'][1] * (1.0 - self .alpha) + center[1] * self.alpha] #do exponential averaging of position to cut down jitters
 
-                #NOTE: This is useful code for getting time however it will (annoyingly) reset at t=0.0 if a new object is spawned for what is actually a single object...
-                #... in which this involves correction calculations de facto that could be inaccurate. Therefore, only time.time() is used with calculations after data collected.
-                # if t['time_start'] is None:
-                #     t['time_start'] = time.time()
-                #     t['time_tot'] = 0
-                # t['time_tot'] = time.time() - t['time_start']
+                if t['state_prior_x'] is None:
+                    t['state_P_prior_x'], t['state_P_prior_y'] = identity_matrix, identity_matrix
+                    t['state_prior2_x'], t['state_prior2_y'] = np.matrix([center[0]]), np.matrix([center[1]])
+                    t['state_prior_x'], t['state_prior_y'] = np.matrix([center[0]]), np.matrix([center[1]])
+                else:
+                    t['state_P_prior_x'], t['state_P_prior_y'] = t['state_P_final_x'], t['state_P_final_y']
+                    t['state_prior2_x'], t['state_prior2_y'] = t['state_prior_x'], t['state_prior_y']
+                    t['state_prior_x'], t['state_prior_y'] = t['state_final_x'], t['state_final_y']
+
+                #print('X_prior: {}'.format(t['state_prior_x']))
+
+                t['state_intermed_x'], t['state_P_intermed_x'] = self.KF_predict(t['state_prior2_x'], t['state_prior_x'], t['state_P_prior_x'], F, F_P, Q, u, B)
+                t['state_intermed_y'], t['state_P_intermed_y'] = self.KF_predict(t['state_prior2_y'], t['state_prior_y'], t['state_P_prior_y'], F, F_P, Q, u, B)
+
+                Z_x = center[0]
+                Z_y = center[1]
+
+                t['state_final_x'], t['state_P_final_x'] = self.KF_update(t['state_intermed_x'], t['state_P_intermed_x'], Z_x, H, R_x)
+                t['state_final_y'], t['state_P_final_y'] = self.KF_update(t['state_intermed_y'], t['state_P_intermed_y'], Z_y, H, R_y)
+                t['center_scaled'] = [t['state_final_x'][0,0], t['state_final_y'][0,0]]
 
                 # print('time: {} at observed_center: {} & center_scaled: {}'.format(time.time(), center, t['center_scaled']))
-                t['brect'] = brect
 
+                t['brect'] = brect
                 return False
 
 
@@ -324,7 +404,21 @@ class TrackerProcessor(Processor):
                      'id': id_num,
                      'connectedToPrimary': [],
                      'weight':[temperature,1],
-                     'time_start': None,
-                     'time_tot': None}
+                    #  'time_start': None,
+                    #  'time_tot': None,
+                     'state_prior2_x': None,
+                     'state_prior2_y': None,
+                     'state_prior_x': None,
+                     'state_prior_y': None,
+                     'state_intermed_x': None,
+                     'state_intermed_y': None,
+                     'state_P_prior_x': None,
+                     'state_P_prior_y': None,
+                     'state_P_intermed_x': None,
+                     'state_P_intermed_y': None,
+                     'state_final_x': None,
+                     'state_final_y': None,
+                     'state_P_final_x': None,
+                     'state_P_final_y': None}
         self._tracking.append(track_obj)
         return True

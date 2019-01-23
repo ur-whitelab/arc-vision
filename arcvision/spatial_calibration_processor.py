@@ -91,9 +91,6 @@ class SpatialCalibrationProcessor(Processor):
 
     def _write_calibration(self, filepath):
         if (os.path.exists(filepath)):
-                # read the existing data file to update
-                data = pickle.load(open(filepath, 'rb'))
-        if (os.path.exists(filepath)):
                   # read the existing data file to update
             data = pickle.load(open(filepath, 'rb'))
         else:
@@ -167,7 +164,7 @@ class SpatialCalibrationProcessor(Processor):
             if self.index == self.N - 1:
                 print('updating homography...fit = {}'.format(self.fit))
                 self._update_homography(frame)
-                if (self.fit < .001 and self.fit < self.initial_fit):
+                if (self.fit < .05 and self.fit < self.initial_fit):
                     self._write_calibration(SpatialCalibrationProcessor.PICKLE_FILE)
                 self.calibration_points = np.random.random( (self.N, 2)) * 0.8 + 0.1
                 #seed next round with fit, weighted by how well the homography fit
