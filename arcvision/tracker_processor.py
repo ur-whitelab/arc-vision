@@ -148,7 +148,7 @@ class TrackerProcessor(Processor):
         if (self.lineDetector is None) or len(self.lineDetector.lines) == 0:
             return
         ''' Iterates through tracked objects and the detected lines, finding objects are connected. Updates self._tracking to have directional knowledge of connections'''
-        source_position_scaled = (1.0,0.5)#first coord is X from L to R, second coord is Y from TOP to BOTTOM
+        source_position_scaled = (0.0,0.5)#first coord is X from L to R, second coord is Y from TOP to BOTTOM
         source_position_unscaled = (frameSize[1],round(frameSize[0]*.5))
         #source_position_unscaled = self._unscale_point(source_position_scaled, frameSize)
         source_dist_thresh_upper = int(200.0 / 720.0 * frameSize[0])
