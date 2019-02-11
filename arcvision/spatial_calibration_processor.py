@@ -120,7 +120,7 @@ class SpatialCalibrationProcessor(Processor):
 
     def pause(self):
         # only write good fits/better than the previously calculated one
-        if (self.fit < .001 and self.fit < self.initial_fit):
+        if (self.fit < .01 and self.fit < self.initial_fit):
             self._write_calibration(SpatialCalibrationProcessor.PICKLE_FILE)
 
         self.calibrate = False

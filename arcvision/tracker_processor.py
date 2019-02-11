@@ -148,7 +148,7 @@ class TrackerProcessor(Processor):
         if (self.lineDetector is None) or len(self.lineDetector.lines) == 0:
             return
         ''' Iterates through tracked objects and the detected lines, finding objects are connected. Updates self._tracking to have directional knowledge of connections'''
-        source_position_scaled = (0.0,0.5)#first coord is X from L to R, second coord is Y from TOP to BOTTOM
+        source_position_scaled = (1.0,0.5)#first coord is X from L to R, second coord is Y from TOP to BOTTOM
         source_position_unscaled = (frameSize[1],round(frameSize[0]*.5))
         #source_position_unscaled = self._unscale_point(source_position_scaled, frameSize)
         source_dist_thresh_upper = int(200.0 / 720.0 * frameSize[0])
@@ -322,7 +322,7 @@ class TrackerProcessor(Processor):
         P_final = P_intermediate - dot(K_gain, dot(H, K_gain.T))
         return (X_final, P_final)
 
-    def track(self, frame, brect, poly, label, id_num, temperature = 298):
+    def track(self, frame, brect, poly, label, id_num, temperature = 298, volume = 200):
         '''
         Track a newly found object (returns True), or return False for an existing object.
         '''
@@ -331,8 +331,10 @@ class TrackerProcessor(Processor):
         # get current value of temperature - this will not change after the initialization
         if (self.dialReader is not None):
             temperature = self.dialReader.temperature
+            volume = self.dialReader.volume
         else:
             temperature = 298
+            volume = 200
         #we need to make sure we don't have an existing object here
         i=0
 
@@ -403,7 +405,7 @@ class TrackerProcessor(Processor):
                      'delta': np.int32([0,0]),
                      'id': id_num,
                      'connectedToPrimary': [],
-                     'weight':[temperature,1],
+                     'weight':[temperature,volume],#NOTE: this is where the actual values change!
                     #  'time_start': None,
                     #  'time_tot': None,
                      'state_prior2_x': None,
