@@ -322,7 +322,7 @@ class TrackerProcessor(Processor):
         P_final = P_intermediate - dot(K_gain, dot(H, K_gain.T))
         return (X_final, P_final)
 
-    def track(self, frame, brect, poly, label, id_num, temperature = 298, volume = 200):
+    def track(self, frame, brect, poly, label, id_num, temperature = 300, volume = 200):
         '''
         Track a newly found object (returns True), or return False for an existing object.
         '''
@@ -333,7 +333,7 @@ class TrackerProcessor(Processor):
             temperature = self.dialReader.temperature
             volume = self.dialReader.volume
         else:
-            temperature = 298
+            temperature = 300
             volume = 200
         #we need to make sure we don't have an existing object here
         i=0

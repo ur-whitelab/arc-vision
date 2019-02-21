@@ -6,7 +6,7 @@ CONDITIONS_ID = 999
 
 class DialProcessor(Processor):
     ''' Class to handle sending the pressure and temperature data to the graph. Does no image processing '''
-    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 5, tempLowerBound = 100, tempUpperBound = 800, initialVolumeValue = 200, volumeStep = 10, volLowerBound = 10, volUpperBound = 250, debug = False):
+    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 5, tempLowerBound = 100, tempUpperBound = 800, initialVolumeValue = 200, volumeStep = 10, volLowerBound = 10, volUpperBound = 990, debug = False):
         # assuming
         # set stride low because we have no image processing to take time
         super().__init__(camera, [], stride)
@@ -15,7 +15,7 @@ class DialProcessor(Processor):
         self.tempLowerBound = tempLowerBound
         self.tempUpperBound = tempUpperBound
 
-        self.initVol = initialVolumeValue
+        self.initVolume = initialVolumeValue
         self.volumeStep = float(volumeStep)
         self.volumeLowerBound = volLowerBound
         self.volumeUpperBound = volUpperBound
@@ -26,7 +26,6 @@ class DialProcessor(Processor):
 
     def reset(self):
         self.temperatureHandler = None
-        #self.pressureHandler = None
         self.volumeHandler = None
         try:
             from .griffin_powermate import GriffinPowermate,DialHandler
@@ -37,7 +36,7 @@ class DialProcessor(Processor):
                 print('ERROR: FOUND NO DEVICES')
             else :
                 self.temperatureHandler = DialHandler(devices[0], self.initTemp, self.tempStep, self.tempLowerBound,self.tempUpperBound)
-                self.volumeHandler = DialHandler(devices[1], self.initVol, self.volumeStep, self.volumeLowerBound,self.volumeUpperBound)
+                self.volumeHandler = DialHandler(devices[1], self.initVolume, self.volumeStep, self.volumeLowerBound,self.volumeUpperBound)
         except ModuleNotFoundError:
             self.temperatureHandler = None
             self.volumeHandler = None
@@ -46,7 +45,7 @@ class DialProcessor(Processor):
 
 
         # initialize the objects- give them constant ID#s
-        self._objects = [{'id': CONDITIONS_ID, 'label': 'conditions', 'weight':[self.initTemp,self.initVol]}]
+        self._objects = [{'id': CONDITIONS_ID, 'label': 'conditions', 'weight':[self.initTemp,self.initVolume]}]
 
     @property
     def temperature(self):
@@ -65,7 +64,7 @@ class DialProcessor(Processor):
 
         if (self.debug and frame_ind % 100 == 0):
             print('DEBUG: Current Temperature is {} K'.format(self.temperature))
-            print('DEBUG: Current Volume is {} m^3'.format(self.volume))
+            print('DEBUG: Current Volume is {} L'.format(self.volume))
         return
 
     async def decorate_frame(self, frame, name):
@@ -76,24 +75,18 @@ class DialProcessor(Processor):
         super().close()
         if self.temperatureHandler is not None:
             self.temperatureHandler.close()
-        # if self.pressureHandler is not None:
-        #     self.pressureHandler.close()
         if self.volumeHandler is not None:
             self.volumeHandler.close()
 
     def play(self):
         if self.temperatureHandler is not None:
             self.temperatureHandler.play()
-        # if self.pressureHandler is not None:
-        #     self.pressureHandler.play()
         if self.volumeHandler is not None:
             self.volumeHandler.play()
 
     def pause(self):
         if self.temperatureHandler is not None:
             self.temperatureHandler.pause()
-        # if self.pressureHandler is not None:
-        #     self.pressureHandler.pause()
         if self.volumeHandler is not None:
             self.volumeHandler.pause()
 
