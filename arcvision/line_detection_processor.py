@@ -151,7 +151,7 @@ class LineDetectionProcessor(Processor):
                 aspect_ratio_thresh = 0.3
                 area_thresh_upper = 0.02 * frame.shape[0] * frame.shape[1]
                 area_thresh_lower = 0.0002 * frame.shape[0] * frame.shape[1]
-                width_thresh = 0.04 * frame.shape[0]
+                width_thresh = 0.07 * frame.shape[0]
                 length_thresh_lower = 0.05 * frame.shape[0]
                 length_thresh_upper = 0.4 * frame.shape[0]
                 if (aspectRatio < aspect_ratio_thresh and val_in_range(area, area_thresh_lower, area_thresh_upper) and minDim < width_thresh and val_in_range(maxDim, length_thresh_lower, length_thresh_upper)):

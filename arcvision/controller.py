@@ -298,7 +298,7 @@ class Controller:
                     # weight is a list. append each value
                     for j in range(0,len(o['weight'])):
                         if len(node.weight) < j+1:
-                            print('appending value {} to node id {} weight arr at index {} from processor {}'.format(o['weight'][j], node.id, j, p.name))#prints that o[weight][1] is always 1.0
+                            #print('appending value {} to node id {} weight arr at index {} from processor {}'.format(o['weight'][j], node.id, j, p.name))#prints that o[weight][1] is always 1.0
                             node.weight.append(o['weight'][j])
                         else:
                             node.weight[j] = o['weight'][j]

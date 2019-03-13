@@ -37,12 +37,13 @@ class DarkflowDetectionProcessor(Processor):
     async def process_frame(self, frame, frame_ind):
         result = self.tfnet.return_predict(frame)#get a dict of detected items with labels and confidences.
         for item in result:
-            brect = darkflow_to_rect(item)
-            label = item['label']
-            id_num = self.id_i
-            new_obj = self.tracker.track(frame, brect, None, label, id_num)
-            if(new_obj):
-                self.id_i += 1
+            if item['confidence'] > 0.625:
+                brect = darkflow_to_rect(item)
+                label = item['label']
+                id_num = self.id_i
+                new_obj = self.tracker.track(frame, brect, None, label, id_num)
+                if(new_obj):
+                    self.id_i += 1
 
         return
 
