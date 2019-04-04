@@ -6,7 +6,7 @@ CONDITIONS_ID = 999
 
 class DialProcessor(Processor):
     ''' Class to handle sending the pressure and temperature data to the graph. Does no image processing '''
-    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 5, tempLowerBound = 100, tempUpperBound = 800, initialVolumeValue = 200, volumeStep = 10, volLowerBound = 10, volUpperBound = 990, debug = False):
+    def __init__(self, camera, stride =1, initialTemperatureValue = 300, temperatureStep = 5, tempLowerBound = 295, tempUpperBound = 410, initialVolumeValue = 200, volumeStep = 5, volLowerBound = 10, volUpperBound = 200, debug = False):
         # assuming
         # set stride low because we have no image processing to take time
         super().__init__(camera, [], stride)
